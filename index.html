@@ -2,8 +2,22 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Catering Orders — GB SRS Brundavan</title>
+
+<!-- PWA -->
+<meta name="application-name" content="GB SRS Catering">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Catering">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#5C4EAD">
+<meta name="description" content="Catering order tracker for GB SRS Brundavan volunteers and admin">
+<link rel="manifest" href="manifest.json">
+
+<!-- Apple touch icons (inline SVG converted) -->
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -31,7 +45,7 @@
   --amber:#FCD34D;--amber-bg:#451A03;
   --red:#F87171;--red-bg:#450A0A;
 }}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.5;min-height:100vh}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.5;min-height:100vh;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
 
 /* login */
 #login-screen{min-height:100vh;display:none;align-items:center;justify-content:center;padding:24px}
@@ -1256,6 +1270,16 @@ function showToast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg; t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),2500);
+}
+</script>
+<script>
+// Register service worker for PWA offline support
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js')
+      .then(r=>console.log('SW registered'))
+      .catch(e=>console.log('SW failed', e));
+  });
 }
 </script>
 </body>
