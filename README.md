@@ -1,7 +1,5 @@
 # GB SRS Brundavan — Catering Order Tracker
 
-A real-time catering order management web app built for **GB SRS Brundavan** (Registered Charity No. 1150660), Cowley, UB8 2DZ.
-
 Built as a Progressive Web App (PWA) — installable on iPhone and Android directly from the browser. No app store required.
 
 ---
