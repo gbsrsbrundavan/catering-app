@@ -71,6 +71,28 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .logo-sub{font-size:11px;color:var(--text2)}
 .top-right{display:flex;align-items:center;gap:8px}
 .live-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);display:inline-block;margin-right:3px;animation:pulse 2s infinite}
+/* notification badge */
+.notif-btn{position:relative;width:34px;height:34px;border-radius:var(--radius-sm);border:1px solid var(--border-md);background:var(--surface);cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:18px;flex-shrink:0}
+.notif-btn:hover{background:var(--surface2)}
+.notif-badge{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;font-size:10px;font-weight:700;border-radius:999px;min-width:18px;height:18px;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid var(--bg);animation:badge-pop .3s ease}
+@keyframes badge-pop{from{transform:scale(0)}to{transform:scale(1)}}
+/* notification panel */
+.notif-panel{position:fixed;top:60px;right:12px;width:320px;max-width:calc(100vw - 24px);background:var(--surface);border:1px solid var(--border-md);border-radius:var(--radius);box-shadow:var(--shadow-md);z-index:50;max-height:420px;display:flex;flex-direction:column;animation:slideDown .2s ease}
+@keyframes slideDown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.notif-panel-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.notif-panel-title{font-size:14px;font-weight:600}
+.notif-clear{font-size:12px;color:var(--accent);cursor:pointer;background:none;border:none;font-family:inherit;padding:0}
+.notif-clear:hover{text-decoration:underline}
+.notif-list{overflow-y:auto;flex:1}
+.notif-item{padding:12px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s}
+.notif-item:hover{background:var(--surface2)}
+.notif-item.unread{background:var(--accent-bg)}
+.notif-item:last-child{border-bottom:none}
+.notif-item-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px}
+.notif-item-body{font-size:12px;color:var(--text2);line-height:1.4}
+.notif-item-time{font-size:11px;color:var(--text3);margin-top:4px}
+.notif-empty{padding:32px 16px;text-align:center;color:var(--text3);font-size:13px}
+.notif-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0;margin-top:4px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
 .live-label{font-size:12px;color:var(--text2)}
 .view-switch{display:flex;gap:3px;background:var(--surface2);border-radius:7px;padding:3px}
@@ -300,7 +322,10 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
     </div>
     <div class="top-right">
       <span class="live-dot" id="live-dot"></span><span class="live-label">Live</span>
-      <div class="view-switch" style="margin-left:6px">
+      <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Notifications">
+        <i class="ti ti-bell" aria-hidden="true" style="font-size:17px"></i>
+      </button>
+      <div class="view-switch" style="margin-left:2px">
         <button class="vs-btn active" id="tab-vol" onclick="setView('volunteer')"><i class="ti ti-users" aria-hidden="true"></i> Team</button>
         <button class="vs-btn" id="tab-adm" onclick="requireAdmin()"><i class="ti ti-settings" aria-hidden="true"></i> Admin</button>
       </div>
@@ -371,6 +396,17 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
         <i class="ti ti-plus" aria-hidden="true"></i> Add order for this date
       </button>
     </div>
+  </div>
+</div>
+
+<!-- Notification panel -->
+<div class="notif-panel" id="notif-panel" style="display:none">
+  <div class="notif-panel-head">
+    <span class="notif-panel-title"><i class="ti ti-bell" aria-hidden="true" style="font-size:14px;vertical-align:-2px;margin-right:6px;color:var(--accent)"></i>Updates</span>
+    <button class="notif-clear" onclick="clearNotifications()">Mark all read</button>
+  </div>
+  <div class="notif-list" id="notif-list">
+    <div class="notif-empty">No updates yet</div>
   </div>
 </div>
 
@@ -900,6 +936,7 @@ function renderAll(){
   renderOrders();
   renderVolManager();
   renderVenueManager();
+  renderNotifBadge();
 }
 
 // ── modal ──
