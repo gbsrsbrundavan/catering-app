@@ -273,3 +273,10 @@ Hosted on **GitHub Pages** | Database on **Supabase** (real-time sync)
 - Volunteer tags restyled in purple accent colour for visibility
 
 ---
+### v1.13 — Menu formatting
+
+- Menu field in the order form now shows a hint: "Enter each item on a new line or separated by commas"
+- Textarea placeholder updated to show items on separate lines for clarity
+- Menu items on order cards now display as a formatted bullet list — one item per row with a purple dot and subtle divider lines
+- Works automatically for both comma-separated and newline-separated input — no data changes needed
+- Single-item menus display as plain text; multiple items display as a list
