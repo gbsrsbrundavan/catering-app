@@ -173,6 +173,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .divider{border:none;border-top:1px solid var(--border);margin:12px 0}
 .eyebrow{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
 .menu-text{font-size:13px;color:var(--text2);line-height:1.6}
+.menu-list{list-style:none;padding:0;margin:0}
+.menu-list li{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text);padding:5px 0;border-bottom:1px solid var(--border)}
+.menu-list li:last-child{border-bottom:none}
+.menu-list li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0;margin-top:5px}
 .vol-list{display:flex;flex-wrap:wrap;gap:6px}
 .vol-tag{display:inline-flex;align-items:center;gap:5px;background:var(--accent-bg);border:1px solid rgba(92,78,173,0.18);border-radius:999px;padding:4px 11px;font-size:12px;color:var(--accent);font-weight:500}
 .notes-box{background:var(--surface2);border-radius:var(--radius-sm);padding:10px 12px;font-size:13px;color:var(--text2);line-height:1.6;margin-top:10px;display:flex;gap:8px}
@@ -863,6 +867,15 @@ function venueBadge(type, other){
 }
 
 // ── order card ──
+function formatMenu(raw){
+  if(!raw) return '';
+  // Split by newline or comma, clean up each item
+  const items = raw.split(/[\n,]/).map(s=>s.trim()).filter(Boolean);
+  if(!items.length) return '';
+  if(items.length === 1) return `<div class="menu-text">${esc(items[0])}</div>`;
+  return `<ul class="menu-list">${items.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`;
+}
+
 function orderCard(o, admin){
   const vols=(o.volunteers||[]).map(v=>`<span class="vol-tag"><i class="ti ti-user" aria-hidden="true" style="font-size:11px"></i>${esc(v)}</span>`).join('');
   return `<div class="order-card">
@@ -879,7 +892,7 @@ function orderCard(o, admin){
       <div><div class="info-label">Quote price</div><div class="info-val">${o.quote_price?'£'+parseFloat(o.quote_price).toFixed(2):'—'}</div></div>
       <div><div class="info-label">Contact</div><div class="info-val" style="font-size:12px">${esc(o.contact||'—')}</div></div>
     </div>
-    ${o.menu?`<hr class="divider"><div class="eyebrow">Menu</div><div class="menu-text">${esc(o.menu)}</div>`:''}
+    ${o.menu?`<hr class="divider"><div class="eyebrow">Menu</div>${formatMenu(o.menu)}`:''}
     <hr class="divider">
     <div class="eyebrow">Volunteers assigned</div>
     ${vols
@@ -1028,7 +1041,8 @@ function openModal(prefill){
     </div>
     <div class="form-group">
       <label class="form-label">Menu items</label>
-      <textarea id="f-menu" placeholder="Puliyogare, Sambar rice, Chitranna, Payasam...">${esc(f.menu||'')}</textarea>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:5px">Enter each item on a new line or separated by commas</div>
+      <textarea id="f-menu" placeholder="Puliyogare&#10;Sambar rice&#10;Chitranna&#10;Payasam" style="min-height:100px">${esc(f.menu||'')}</textarea>
     </div>
     <div class="form-group">
       <label class="form-label">Contact person &amp; phone</label>
