@@ -131,6 +131,13 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .breakdown-month-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;padding:0 2px;font-weight:600}
 .breakdown-month-scroll{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
 .breakdown-month-scroll::-webkit-scrollbar{display:none}
+.breakdown-order-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)}
+.breakdown-order-row:last-child{border-bottom:none}
+.breakdown-order-name{font-size:12px;font-weight:500;color:var(--text);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.breakdown-order-meta{font-size:11px;color:var(--text3);margin-top:1px}
+.breakdown-order-vals{text-align:right;flex-shrink:0}
+.breakdown-order-price{font-size:12px;font-weight:600;color:var(--text)}
+.breakdown-order-portions{font-size:11px;color:var(--text3)}
 
 /* calendar */
 .cal-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px;box-shadow:var(--shadow)}
@@ -861,16 +868,46 @@ function renderBreakdown(){
     const conf=dayOrders.filter(o=>o.order_status==='confirmed').length;
     const tent=dayOrders.filter(o=>o.order_status==='tentative').length;
     const canc=dayOrders.filter(o=>o.order_status==='cancelled').length;
-    html+=`<div class="breakdown-card ${k===selectedDate?'active':''}" id="bcard_${k}" onclick="selectDate('${k}')">
-      <div class="breakdown-date">${fmtDateShort(k)}</div>
-      <div class="breakdown-row"><span class="breakdown-key">Orders</span><span class="breakdown-val">${dayOrders.length}</span></div>
-      <div class="breakdown-row"><span class="breakdown-key">Portions</span><span class="breakdown-val">${portions||'—'}</span></div>
-      <div class="breakdown-row"><span class="breakdown-key">Quoted</span><span class="breakdown-val">${value?'£'+value.toFixed(2):'—'}</span></div>
-      <div class="breakdown-badges">
-        ${conf?`<span class="bd-badge badge-confirmed">${conf} conf</span>`:''}
-        ${tent?`<span class="bd-badge badge-tentative">${tent} tent</span>`:''}
-        ${canc?`<span class="bd-badge badge-cancelled">${canc} canc</span>`:''}
+    // Build per-order rows
+    const orderRows = dayOrders.map(o=>{
+      const price = parseFloat(o.quote_price)||0;
+      const pts   = parseInt(o.portions)||0;
+      const statusDot = o.order_status==='confirmed'?'var(--green)':o.order_status==='tentative'?'var(--amber)':'var(--red)';
+      return `<div class="breakdown-order-row">
+        <div style="flex:1;min-width:0">
+          <div class="breakdown-order-name">
+            <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${statusDot};margin-right:5px;vertical-align:2px;flex-shrink:0"></span>${esc(o.client||'—')}
+          </div>
+          ${o.devotee_name?`<div class="breakdown-order-meta">${esc(o.devotee_name)}</div>`:''}
+        </div>
+        <div class="breakdown-order-vals">
+          <div class="breakdown-order-price">${price?'£'+price.toFixed(2):'—'}</div>
+          <div class="breakdown-order-portions">${pts?pts+' portions':''}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Footer totals only if more than one order
+    const footerHtml = dayOrders.length > 1 ? `
+      <div style="display:flex;justify-content:space-between;padding-top:6px;margin-top:2px;border-top:1.5px solid var(--border-md)">
+        <span style="font-size:11px;color:var(--text3);font-weight:600">TOTAL</span>
+        <div style="text-align:right">
+          <div style="font-size:12px;font-weight:700;color:var(--text)">${value?'£'+value.toFixed(2):'—'}</div>
+          <div style="font-size:11px;color:var(--text3)">${portions||''} portions</div>
+        </div>
+      </div>` : '';
+
+    html+=`<div class="breakdown-card ${k===selectedDate?'active':''}" id="bcard_${k}" onclick="selectDate('${k}')" style="min-width:220px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="breakdown-date">${fmtDateShort(k)}</div>
+        <div class="breakdown-badges" style="margin:0">
+          ${conf?`<span class="bd-badge badge-confirmed">${conf} conf</span>`:''}
+          ${tent?`<span class="bd-badge badge-tentative">${tent} tent</span>`:''}
+          ${canc?`<span class="bd-badge badge-cancelled">${canc} canc</span>`:''}
+        </div>
       </div>
+      ${orderRows}
+      ${footerHtml}
     </div>`;
   });
   if(lastMonth) html+='</div></div>';
