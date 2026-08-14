@@ -1324,7 +1324,7 @@ function previewCsv(e){
   reader.onload=ev=>{
     const lines=ev.target.result.replace(/\x0d/g,'').split('\x0a').filter(l=>l.trim());
     if(lines.length<2){ document.getElementById('csv-preview').innerHTML='<span style="color:var(--red)">File appears empty or has no data rows.</span>'; return; }
-    const headers=parseCsvLine(lines[0]).map(h=>h.toLowerCase().replace(/"/g,''));
+    const headers=parseCsvLine(lines[0]).map(h=>h.toLowerCase().replace(/"/g,'').replace(/[\uFEFF\r]/g,'').trim());
     csvRows=lines.slice(1).map(line=>{
       const vals=parseCsvLine(line);
       const obj={};
@@ -1372,19 +1372,23 @@ async function runCsvImport(){
         const dateId=legacyMap[row.date_id]||row.date_id||'';
         if(!dateId||!row.client){ skipped++; continue; }
         const vols=row.volunteers?row.volunteers.split(';').map(v=>v.trim()).filter(Boolean):[];
+        // Normalise key names — handle spaces, case, BOM characters
+        const norm = {};
+        Object.keys(row).forEach(k=>{ norm[k.trim().toLowerCase().replace(/[^a-z_]/g,'')] = (row[k]||'').trim(); });
+        const qp = parseFloat(norm.quote_price || norm.quoteprice || norm.price || 0) || 0;
         await addDoc(collection(db,'orders'),{
-          date_id:dateId, client:row.client||'',
-          devotee_name:row.devotee_name||'',
-          portions:parseInt(row.portions)||0,
-          time_slot:row.time_slot||'',
-          menu:row.menu||'',
-          contact:row.contact||'',
+          date_id:dateId, client:norm.client||row.client||'',
+          devotee_name:norm.devotee_name||row.devotee_name||'',
+          portions:parseInt(norm.portions||row.portions)||0,
+          time_slot:norm.time_slot||norm.timeslot||row.time_slot||'',
+          menu:norm.menu||row.menu||'',
+          contact:norm.contact||row.contact||'',
           volunteers:vols,
-          venue_type:row.venue_type||'__temple__',
-          venue_other:row.venue_other||'',
-          order_status:row.order_status||'confirmed',
-          quote_price:parseFloat(row.quote_price)||0,
-          notes:row.notes||'',
+          venue_type:norm.venue_type||norm.venuetype||row.venue_type||'__temple__',
+          venue_other:norm.venue_other||row.venue_other||'',
+          order_status:norm.order_status||row.order_status||'confirmed',
+          quote_price:qp,
+          notes:norm.notes||row.notes||'',
           created_at:new Date().toISOString(),
         });
         count++;
