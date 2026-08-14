@@ -1394,6 +1394,10 @@ async function runCsvImport(){
         const legacyMap={d1:'2025-06-27',d2:'2025-06-28',d3:'2025-07-01',d4:'2025-07-11',d5:'2025-07-12'};
         const dateId=legacyMap[row.date_id]||row.date_id||'';
         if(!dateId||!row.client){ skipped++; continue; }
+        // Normalise key names first — handle spaces, case, BOM characters
+        const norm = {};
+        Object.keys(row).forEach(k=>{ norm[k.trim().toLowerCase().replace(/[^a-z_]/g,'')] = (row[k]||'').trim(); });
+        const qp = parseFloat(norm.quote_price || norm.quoteprice || norm.price || 0) || 0;
         // Parse volunteers — could be JSON array ["a","b"] or semicolon separated
         let vols=[];
         const volRaw=(norm.volunteers||row.volunteers||'').trim();
@@ -1403,10 +1407,6 @@ async function runCsvImport(){
         } else if(volRaw){
           vols=volRaw.split(';').map(v=>v.trim()).filter(Boolean);
         }
-        // Normalise key names — handle spaces, case, BOM characters
-        const norm = {};
-        Object.keys(row).forEach(k=>{ norm[k.trim().toLowerCase().replace(/[^a-z_]/g,'')] = (row[k]||'').trim(); });
-        const qp = parseFloat(norm.quote_price || norm.quoteprice || norm.price || 0) || 0;
         await addDoc(collection(db,'orders'),{
           date_id:dateId, client:norm.client||row.client||'',
           devotee_name:norm.devotee_name||row.devotee_name||'',
