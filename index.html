@@ -426,7 +426,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
 const SUPABASE_URL = 'https://cflqpqenxyctzgonowjw.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_pOm8E-dlRt6qrdjw8YVB2w_V_x5kgYk';
@@ -468,32 +468,33 @@ function fmtDate(k){
 
 // ── init ──
 (async function init(){
-  try {
-    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth:{ persistSession:false } });
-    // Pre-set volunteer PIN if not already stored
-    if(!localStorage.getItem(VOL_PIN_KEY)) localStorage.setItem(VOL_PIN_KEY, VOL_PIN_DEFAULT);
-    // Check existing sessions
-    if(sessionStorage.getItem(ADMIN_KEY)==='true'){ isAdmin=true; isVolunteer=true; }
-    else if(sessionStorage.getItem(VOL_KEY)==='true'){ isVolunteer=true; }
-
-    if(isVolunteer){
-      await Promise.all([loadVolunteers(), loadVenues(), loadOrders()]);
-      setupRealtime();
-      selectedDate = todayKey();
-      document.getElementById('app-screen').style.display = 'block';
-      renderAll();
-      if(isAdmin){ document.getElementById('logout-btn').style.display='flex'; setView('admin'); }
-    } else {
-      // Always require login
-      document.getElementById('login-screen').style.display = 'flex';
-    }
-  } catch(e) {
-    console.error(e);
-    document.getElementById('app-screen').style.display = 'block';
-    document.getElementById('vol-orders').innerHTML =
-      '<div class="empty"><i class="ti ti-alert-circle" style="color:var(--red)"></i><p style="color:var(--red)">Could not connect.<br>Check Supabase SQL was run, then refresh.</p></div>';
-  }
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+  if(!localStorage.getItem(VOL_PIN_KEY)) localStorage.setItem(VOL_PIN_KEY, VOL_PIN_DEFAULT);
+  if(sessionStorage.getItem(ADMIN_KEY)==='true'){ isAdmin=true; isVolunteer=true; }
+  else if(sessionStorage.getItem(VOL_KEY)==='true'){ isVolunteer=true; }
+  if(isVolunteer){ await loadAppData(); }
+  else { document.getElementById('login-screen').style.display='flex'; }
 })();
+
+async function loadAppData(){
+  try {
+    await Promise.all([loadVolunteers(), loadVenues(), loadOrders()]);
+    setupRealtime();
+    selectedDate = todayKey();
+    document.getElementById('app-screen').style.display='block';
+    document.getElementById('login-screen').style.display='none';
+    renderAll();
+    if(isAdmin){ document.getElementById('logout-btn').style.display='flex'; setView('admin'); }
+  } catch(e){
+    console.error('loadAppData error:', e);
+    document.getElementById('app-screen').style.display='block';
+    document.getElementById('login-screen').style.display='none';
+    document.getElementById('vol-orders').innerHTML =
+      '<div class="empty"><i class="ti ti-wifi-off" aria-hidden="true" style="color:var(--amber);font-size:36px"></i><p style="color:var(--text2);margin-top:8px">Could not load data.<br>Check your internet and <a href="javascript:location.reload()" style="color:var(--accent)">tap to retry</a>.</p></div>';
+  }
+}
 
 // ── data ──
 async function loadOrders(){
@@ -659,30 +660,19 @@ function checkPin(){
 }
 
 async function doLogin(){
-  document.getElementById('login-screen').style.display='none';
-  document.getElementById('app-screen').style.display='block';
-
   if(currentPinRole==='admin'){
     sessionStorage.setItem(ADMIN_KEY,'true');
     sessionStorage.setItem(VOL_KEY,'true');
     isAdmin = true;
     isVolunteer = true;
-    document.getElementById('logout-btn').style.display='flex';
-    await Promise.all([loadVolunteers(), loadVenues(), loadOrders()]);
-    setupRealtime();
-    selectedDate = todayKey();
-    renderAll();
-    setView('admin');
   } else {
     sessionStorage.setItem(VOL_KEY,'true');
     isVolunteer = true;
     isAdmin = false;
-    await Promise.all([loadVolunteers(), loadVenues(), loadOrders()]);
-    setupRealtime();
-    selectedDate = todayKey();
-    renderAll();
-    setView('volunteer');
   }
+  await loadAppData();
+  if(currentPinRole==='admin') setView('admin');
+  else setView('volunteer');
 }
 
 function logoutAdmin(){
