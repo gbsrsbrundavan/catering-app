@@ -1305,16 +1305,39 @@ function openCsvImport(type){
   document.getElementById('csv-file').addEventListener('change', previewCsv);
 }
 
-function parseCsvLine(line){
-  const vals=[]; let cur=''; let inQuote=false;
-  for(let i=0;i<line.length;i++){
-    const ch=line[i];
-    if(ch==='"'){ inQuote=!inQuote; }
-    else if(ch===','&&!inQuote){ vals.push(cur.trim()); cur=''; }
-    else { cur+=ch; }
+// Full RFC 4180 CSV parser — handles multiline quoted fields
+function parseCsv(text){
+  // Normalise line endings
+  text = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  const rows = [];
+  let i = 0;
+  while(i < text.length){
+    const row = [];
+    // Parse one row
+    while(i < text.length){
+      let field = '';
+      if(text[i] === '"'){
+        // Quoted field
+        i++; // skip opening quote
+        while(i < text.length){
+          if(text[i] === '"' && text[i+1] === '"'){ field += '"'; i += 2; } // escaped quote
+          else if(text[i] === '"'){ i++; break; } // closing quote
+          else { field += text[i++]; }
+        }
+      } else {
+        // Unquoted field — read until comma or newline
+        while(i < text.length && text[i] !== ',' && text[i] !== '\n'){
+          field += text[i++];
+        }
+      }
+      row.push(field.trim());
+      if(i < text.length && text[i] === ','){ i++; } // skip comma
+      else { break; } // end of row
+    }
+    if(i < text.length && text[i] === '\n') i++; // skip newline
+    if(row.length > 0 && !(row.length === 1 && row[0] === '')) rows.push(row);
   }
-  vals.push(cur.trim());
-  return vals;
+  return rows;
 }
 
 function previewCsv(e){
@@ -1322,13 +1345,13 @@ function previewCsv(e){
   if(!file) return;
   const reader=new FileReader();
   reader.onload=ev=>{
-    const lines=ev.target.result.replace(/\x0d/g,'').split('\x0a').filter(l=>l.trim());
-    if(lines.length<2){ document.getElementById('csv-preview').innerHTML='<span style="color:var(--red)">File appears empty or has no data rows.</span>'; return; }
-    const headers=parseCsvLine(lines[0]).map(h=>h.toLowerCase().replace(/"/g,'').replace(/[\uFEFF\r]/g,'').trim());
-    csvRows=lines.slice(1).map(line=>{
-      const vals=parseCsvLine(line);
+    const text = ev.target.result.replace(/\uFEFF/g,''); // strip BOM
+    const rows = parseCsv(text);
+    if(rows.length < 2){ document.getElementById('csv-preview').innerHTML='<span style="color:var(--red)">File appears empty or has no data rows.</span>'; return; }
+    const headers = rows[0].map(h=>h.toLowerCase().replace(/"/g,'').trim());
+    csvRows = rows.slice(1).map(vals=>{
       const obj={};
-      headers.forEach((h,i)=>{ obj[h]=(vals[i]||'').replace(/^"|"$/g,'').trim(); });
+      headers.forEach((h,i)=>{ obj[h]=(vals[i]||'').trim(); });
       return obj;
     }).filter(r=>{
       if(csvImportType==='volunteers') return r.name;
@@ -1371,7 +1394,15 @@ async function runCsvImport(){
         const legacyMap={d1:'2025-06-27',d2:'2025-06-28',d3:'2025-07-01',d4:'2025-07-11',d5:'2025-07-12'};
         const dateId=legacyMap[row.date_id]||row.date_id||'';
         if(!dateId||!row.client){ skipped++; continue; }
-        const vols=row.volunteers?row.volunteers.split(';').map(v=>v.trim()).filter(Boolean):[];
+        // Parse volunteers — could be JSON array ["a","b"] or semicolon separated
+        let vols=[];
+        const volRaw=(norm.volunteers||row.volunteers||'').trim();
+        if(volRaw.startsWith('[')){
+          try{ vols=JSON.parse(volRaw).map(v=>String(v).trim()).filter(Boolean); }
+          catch(e){ vols=volRaw.replace(/[\[\]"]/g,'').split(',').map(v=>v.trim()).filter(Boolean); }
+        } else if(volRaw){
+          vols=volRaw.split(';').map(v=>v.trim()).filter(Boolean);
+        }
         // Normalise key names — handle spaces, case, BOM characters
         const norm = {};
         Object.keys(row).forEach(k=>{ norm[k.trim().toLowerCase().replace(/[^a-z_]/g,'')] = (row[k]||'').trim(); });
