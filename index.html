@@ -405,9 +405,28 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
       <button class="add-btn" id="add-order-btn" onclick="openModal()" style="display:none">
         <i class="ti ti-plus" aria-hidden="true"></i> Add order for this date
       </button>
-      <button class="add-btn" onclick="openCsvImport()" style="margin-top:8px;border-style:dashed;color:var(--text3)">
-        <i class="ti ti-file-upload" aria-hidden="true"></i> Import orders from CSV
-      </button>
+      <!-- Data tools — collapsed by default -->
+      <div style="margin-top:16px">
+        <button onclick="toggleDataTools()" style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--text3);display:flex;align-items:center;gap:5px;padding:0;font-family:inherit" id="data-tools-toggle">
+          <i class="ti ti-chevron-right" id="data-tools-chevron" style="font-size:13px;transition:transform .2s"></i> Data tools
+        </button>
+        <div id="data-tools-panel" style="display:none;margin-top:10px;background:var(--surface2);border-radius:var(--radius);padding:14px 16px">
+          <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.5">
+            One-off tools for importing existing data from CSV. Use these to migrate data from another system.
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-sm" onclick="openCsvImport('orders')" style="font-size:12px">
+              <i class="ti ti-file-upload" style="font-size:13px"></i> Import orders
+            </button>
+            <button class="btn-sm" onclick="openCsvImport('volunteers')" style="font-size:12px">
+              <i class="ti ti-file-upload" style="font-size:13px"></i> Import volunteers
+            </button>
+            <button class="btn-sm" onclick="openCsvImport('venues')" style="font-size:12px">
+              <i class="ti ti-file-upload" style="font-size:13px"></i> Import venues
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1256,42 +1275,69 @@ document.addEventListener('click',e=>{
 });
 
 // ── CSV Import ──
-function openCsvImport(){
+let csvRows = [];
+let csvImportType = 'orders';
+
+function openCsvImport(type){
+  csvImportType = type || 'orders';
+  const titles = {orders:'Import orders from CSV', volunteers:'Import volunteers from CSV', venues:'Import venues from CSV'};
+  const hints = {
+    orders:'Required columns: <code>date_id, client, portions, time_slot, menu, contact, volunteers, venue_type, order_status, quote_price, notes, devotee_name</code><br>Volunteers column: separate multiple names with a semicolon (;)',
+    volunteers:'Required column: <code>name</code>',
+    venues:'Required columns: <code>name, address</code> (address is optional)'
+  };
   document.getElementById('modal-body').innerHTML=`
     <div class="modal-head">
-      <span class="modal-title">Import orders from CSV</span>
+      <span class="modal-title">${titles[csvImportType]}</span>
       <button class="close-btn" onclick="closeModal()" aria-label="Close"><i class="ti ti-x"></i></button>
     </div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.6">
-      Upload your CSV file exported from the old system. Required columns:<br>
-      <code style="font-size:11px;background:var(--surface2);padding:2px 6px;border-radius:4px">date_id, client, portions, time_slot, menu, contact, volunteers, venue_type, order_status, quote_price, notes, devotee_name</code>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.8">
+      ${hints[csvImportType]}
     </div>
     <div class="form-group">
       <label class="form-label">Select CSV file</label>
       <input type="file" id="csv-file" accept=".csv" style="padding:8px">
     </div>
     <div id="csv-preview" style="font-size:12px;color:var(--text2);margin-bottom:12px"></div>
-    <button class="btn-primary" id="csv-import-btn" onclick="runCsvImport()" style="display:none">Import orders</button>
+    <button class="btn-primary" id="csv-import-btn" onclick="runCsvImport()" style="display:none">Import ${csvImportType}</button>
   `;
   document.getElementById('modal-backdrop').classList.add('open');
   document.getElementById('csv-file').addEventListener('change', previewCsv);
 }
 
-let csvRows = [];
+function parseCsvLine(line){
+  const vals=[]; let cur=''; let inQuote=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(ch==='"'){ inQuote=!inQuote; }
+    else if(ch===','&&!inQuote){ vals.push(cur.trim()); cur=''; }
+    else { cur+=ch; }
+  }
+  vals.push(cur.trim());
+  return vals;
+}
+
 function previewCsv(e){
   const file=e.target.files[0];
   if(!file) return;
   const reader=new FileReader();
   reader.onload=ev=>{
-    const lines=ev.target.result.split(/\r?\n/).filter(l=>l.trim());
-    const headers=lines[0].split(",").map(h=>h.trim().replace(/"/g,"").toLowerCase());
+    const lines=ev.target.result.split(/
+?
+/).filter(l=>l.trim());
+    if(lines.length<2){ document.getElementById('csv-preview').innerHTML='<span style="color:var(--red)">File appears empty or has no data rows.</span>'; return; }
+    const headers=parseCsvLine(lines[0]).map(h=>h.toLowerCase().replace(/"/g,''));
     csvRows=lines.slice(1).map(line=>{
-      const vals=line.match(/(".*?"|[^,]+)(?=,|$)/g)||line.split(",");
+      const vals=parseCsvLine(line);
       const obj={};
-      headers.forEach((h,i)=>{ obj[h]=(vals[i]||"").replace(/^"|"$/g,"").trim(); });
+      headers.forEach((h,i)=>{ obj[h]=(vals[i]||'').replace(/^"|"$/g,'').trim(); });
       return obj;
-    }).filter(r=>r.client||r.date_id);
-    document.getElementById('csv-preview').innerHTML=`<span style="color:var(--green);font-weight:600">${csvRows.length} orders found</span> — click Import to add them.`;
+    }).filter(r=>{
+      if(csvImportType==='volunteers') return r.name;
+      if(csvImportType==='venues') return r.name;
+      return r.client||r.date_id;
+    });
+    document.getElementById('csv-preview').innerHTML=`<span style="color:var(--green);font-weight:600">${csvRows.length} ${csvImportType} found</span> — click Import to add them.`;
     document.getElementById('csv-import-btn').style.display='block';
   };
   reader.readAsText(file);
@@ -1300,37 +1346,68 @@ function previewCsv(e){
 async function runCsvImport(){
   const btn=document.getElementById('csv-import-btn');
   btn.disabled=true; btn.textContent='Importing...';
-  let count=0;
+  let count=0; let skipped=0;
+
   for(const row of csvRows){
     try {
-      // Normalise date_id — handle legacy d1-d5
-      const legacyMap={d1:'2025-06-27',d2:'2025-06-28',d3:'2025-07-01',d4:'2025-07-11',d5:'2025-07-12'};
-      const dateId=legacyMap[row.date_id]||row.date_id||'';
-      const vols=row.volunteers?row.volunteers.split(';').map(v=>v.trim()).filter(Boolean):[];
-      await addDoc(collection(db,'orders'),{
-        date_id:dateId,
-        client:row.client||'',
-        devotee_name:row.devotee_name||'',
-        portions:parseInt(row.portions)||0,
-        time_slot:row.time_slot||'',
-        menu:row.menu||'',
-        contact:row.contact||'',
-        volunteers:vols,
-        venue_type:row.venue_type||'__temple__',
-        venue_other:row.venue_other||'',
-        order_status:row.order_status||'confirmed',
-        quote_price:parseFloat(row.quote_price)||0,
-        notes:row.notes||'',
-        created_at:new Date().toISOString(),
-      });
-      count++;
-    } catch(e){ console.error('Import row failed',e); }
+      if(csvImportType==='volunteers'){
+        const name=(row.name||'').trim();
+        if(!name){ skipped++; continue; }
+        // Check not already in roster
+        if(!volunteers.includes(name)){
+          await addDoc(collection(db,'volunteers'),{name, created_at:new Date().toISOString()});
+          count++;
+        } else { skipped++; }
+
+      } else if(csvImportType==='venues'){
+        const name=(row.name||'').trim();
+        if(!name){ skipped++; continue; }
+        await addDoc(collection(db,'venues'),{
+          name, address:(row.address||'').trim(),
+          created_at:new Date().toISOString()
+        });
+        count++;
+
+      } else {
+        // Orders
+        const legacyMap={d1:'2025-06-27',d2:'2025-06-28',d3:'2025-07-01',d4:'2025-07-11',d5:'2025-07-12'};
+        const dateId=legacyMap[row.date_id]||row.date_id||'';
+        if(!dateId||!row.client){ skipped++; continue; }
+        const vols=row.volunteers?row.volunteers.split(';').map(v=>v.trim()).filter(Boolean):[];
+        await addDoc(collection(db,'orders'),{
+          date_id:dateId, client:row.client||'',
+          devotee_name:row.devotee_name||'',
+          portions:parseInt(row.portions)||0,
+          time_slot:row.time_slot||'',
+          menu:row.menu||'',
+          contact:row.contact||'',
+          volunteers:vols,
+          venue_type:row.venue_type||'__temple__',
+          venue_other:row.venue_other||'',
+          order_status:row.order_status||'confirmed',
+          quote_price:parseFloat(row.quote_price)||0,
+          notes:row.notes||'',
+          created_at:new Date().toISOString(),
+        });
+        count++;
+      }
+    } catch(e){ console.error('Import row failed',e); skipped++; }
   }
+  await Promise.all([loadVolunteers(), loadVenues(), loadOrders()]);
+  renderAll();
   closeModal();
-  showToast(`${count} orders imported successfully`);
+  showToast(`${count} ${csvImportType} imported${skipped?' ('+skipped+' skipped)':''}`);
 }
 
 // ── Toast ──
+function toggleDataTools(){
+  const panel = document.getElementById('data-tools-panel');
+  const chevron = document.getElementById('data-tools-chevron');
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  chevron.style.transform = isOpen ? '' : 'rotate(90deg)';
+}
+
 function showToast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg; t.classList.add('show');
@@ -1358,7 +1435,7 @@ window.confirmReason=confirmReason; window.viewChangeLog=viewChangeLog;
 window.toggleNotifPanel=toggleNotifPanel; window.clearNotifications=clearNotifications;
 window.notifClick=notifClick; window.showForgotPin=showForgotPin;
 window.confirmReset=confirmReset; window.closeResetModal=closeResetModal;
-window.openCsvImport=openCsvImport; window.runCsvImport=runCsvImport;
+window.openCsvImport=openCsvImport; window.toggleDataTools=toggleDataTools; window.runCsvImport=runCsvImport; window.previewCsv=previewCsv;
 </script>
 </body>
 </html>
