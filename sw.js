@@ -1,4 +1,4 @@
-const CACHE = 'gbsrs-catering-v1';
+const CACHE = 'gbsrs-catering-v3';
 const ASSETS = [
   './index.html',
   './manifest.json',

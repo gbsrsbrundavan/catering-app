@@ -1283,13 +1283,12 @@ function previewCsv(e){
   if(!file) return;
   const reader=new FileReader();
   reader.onload=ev=>{
-    const lines=ev.target.result.split('
-').filter(l=>l.trim());
-    const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,'').toLowerCase());
+    const lines=ev.target.result.split(/\r?\n/).filter(l=>l.trim());
+    const headers=lines[0].split(",").map(h=>h.trim().replace(/"/g,"").toLowerCase());
     csvRows=lines.slice(1).map(line=>{
-      const vals=line.match(/(".*?"|[^,]+)(?=,|$)/g)||line.split(',');
+      const vals=line.match(/(".*?"|[^,]+)(?=,|$)/g)||line.split(",");
       const obj={};
-      headers.forEach((h,i)=>{ obj[h]=(vals[i]||'').replace(/^"|"$/g,'').trim(); });
+      headers.forEach((h,i)=>{ obj[h]=(vals[i]||"").replace(/^"|"$/g,"").trim(); });
       return obj;
     }).filter(r=>r.client||r.date_id);
     document.getElementById('csv-preview').innerHTML=`<span style="color:var(--green);font-weight:600">${csvRows.length} orders found</span> — click Import to add them.`;
