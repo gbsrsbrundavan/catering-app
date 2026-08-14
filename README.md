@@ -1,5 +1,7 @@
 # GB SRS Brundavan — Catering Order Tracker
 
+A real-time catering order management web app built for **GB SRS Brundavan** (Registered Charity No. 1150660), Cowley, UB8 2DZ.
+
 Built as a Progressive Web App (PWA) — installable on iPhone and Android directly from the browser. No app store required.
 
 ---
@@ -271,10 +273,38 @@ Hosted on **GitHub Pages** | Database on **Supabase** (real-time sync)
 - Volunteer tags restyled in purple accent colour for visibility
 
 ---
-### v1.13 — Menu formatting
 
+### v1.13 — Menu formatting
 - Menu field in the order form now shows a hint: "Enter each item on a new line or separated by commas"
 - Textarea placeholder updated to show items on separate lines for clarity
-- Menu items on order cards now display as a formatted bullet list — one item per row with a purple dot and subtle divider lines
+- Menu items on order cards now display as a **formatted bullet list** — one item per row with a purple dot and subtle divider lines
 - Works automatically for both comma-separated and newline-separated input — no data changes needed
 - Single-item menus display as plain text; multiple items display as a list
+
+---
+
+### v1.14 — By date breakdown fix
+- Legacy fixed date IDs (`d1`–`d5`) now filtered out of the breakdown — only real calendar dates (`YYYY-MM-DD`) shown
+- Breakdown cards now **grouped by month** with a section header per month (e.g. August 2025, October 2025)
+- Each month has its own horizontally scrollable row of date cards
+- Active date card **auto-scrolls into view** when a date is selected on the calendar
+- SQL cleanup query provided to remove legacy test data from Supabase
+
+---
+
+### v1.15 — Security and GDPR assessment
+- Full security audit documented — Supabase anon key exposure, PIN client-side validation, open RLS policies, no rate limiting
+- Full UK GDPR compliance review — personal data inventory, lawful basis, data minimisation, retention, right to erasure, storage location, privacy notice requirement, Data Processing Agreement
+- Data register template provided for charity records
+- Action plan produced in priority order — immediate, soon, and next quarter
+- Supabase DPA signing recommended at supabase.com/dpa
+- GitHub repository set to Private recommended
+- Volunteer PIN and reset passphrase rotation recommended
+
+---
+
+## Support
+
+For any issues or changes contact your GB SRS Brundavan admin team.
+
+Charity No. 1150660 | 55 High Street, Cowley, UB8 2DZ
