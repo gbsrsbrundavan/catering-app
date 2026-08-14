@@ -1322,9 +1322,7 @@ function previewCsv(e){
   if(!file) return;
   const reader=new FileReader();
   reader.onload=ev=>{
-    const lines=ev.target.result.split(/
-?
-/).filter(l=>l.trim());
+    const lines=ev.target.result.split(/\r?\n/).filter(l=>l.trim());
     if(lines.length<2){ document.getElementById('csv-preview').innerHTML='<span style="color:var(--red)">File appears empty or has no data rows.</span>'; return; }
     const headers=parseCsvLine(lines[0]).map(h=>h.toLowerCase().replace(/"/g,''));
     csvRows=lines.slice(1).map(line=>{
