@@ -125,6 +125,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .breakdown-val{font-size:12px;font-weight:600;color:var(--text)}
 .breakdown-badges{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
 .bd-badge{font-size:10px;padding:2px 7px;border-radius:999px;font-weight:600}
+.breakdown-month-group{margin-bottom:12px}
+.breakdown-month-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;padding:0 2px;font-weight:600}
+.breakdown-month-scroll{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+.breakdown-month-scroll::-webkit-scrollbar{display:none}
 
 /* calendar */
 .cal-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:20px;box-shadow:var(--shadow)}
@@ -341,7 +345,9 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
     <div class="summary-row" id="summary-row"></div>
 
     <!-- Date breakdown -->
-    <div class="date-breakdown" id="date-breakdown" style="display:none"></div>
+    <div class="date-breakdown" id="date-breakdown" style="display:none">
+      <div class="breakdown-title">By date</div>
+    </div>
 
     <!-- Calendar -->
     <div class="cal-wrap">
@@ -800,13 +806,13 @@ function renderSummary(){
     <div class="stat"><div class="stat-label">Tentative</div><div class="stat-value amber">${tentative}</div></div>
     <div class="stat"><div class="stat-label">Total quoted</div><div class="stat-value">£${totalValue.toFixed(2)}</div></div>`;
 
-  // Per-date breakdown — only dates that have orders
-  const datesWithOrders = Object.keys(orders)
-    .filter(k=>orders[k].length>0)
-    .sort();
-
   const breakdownEl = document.getElementById('date-breakdown');
   if(!breakdownEl) return;
+
+  // Only real date keys (YYYY-MM-DD format) — skip any legacy IDs like d1, d2 etc
+  const datesWithOrders = Object.keys(orders)
+    .filter(k => /^\d{4}-\d{2}-\d{2}$/.test(k) && orders[k].length > 0)
+    .sort();
 
   if(!datesWithOrders.length){
     breakdownEl.style.display='none';
@@ -814,10 +820,19 @@ function renderSummary(){
   }
   breakdownEl.style.display='';
 
-  breakdownEl.innerHTML = `<div class="breakdown-title">By date</div><div class="breakdown-scroll" id="breakdown-scroll"></div>`;
-
-  const scroll = document.getElementById('breakdown-scroll');
-  scroll.innerHTML = datesWithOrders.map(k=>{
+  // Group dates by month for section headers
+  let html = '';
+  let lastMonth = '';
+  datesWithOrders.forEach(k => {
+    const [y,m] = k.split('-').map(Number);
+    const monthLabel = new Date(y,m-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+    if(monthLabel !== lastMonth){
+      if(lastMonth) html += '</div>'; // close previous month group
+      html += `<div class="breakdown-month-group">
+        <div class="breakdown-month-label">${monthLabel}</div>
+        <div class="breakdown-month-scroll" id="bscroll_${y}_${m}">`;
+      lastMonth = monthLabel;
+    }
     const dayOrders = orders[k];
     const portions  = dayOrders.filter(o=>o.order_status!=='cancelled').reduce((s,o)=>s+(parseInt(o.portions)||0),0);
     const value     = dayOrders.filter(o=>o.order_status!=='cancelled').reduce((s,o)=>s+(parseFloat(o.quote_price)||0),0);
@@ -825,7 +840,7 @@ function renderSummary(){
     const tent      = dayOrders.filter(o=>o.order_status==='tentative').length;
     const canc      = dayOrders.filter(o=>o.order_status==='cancelled').length;
     const isActive  = k===selectedDate;
-    return `<div class="breakdown-card ${isActive?'active':''}" onclick="selectDate('${k}')">
+    html += `<div class="breakdown-card ${isActive?'active':''}" id="bcard_${k}" onclick="selectDate('${k}')">
       <div class="breakdown-date">${fmtDateShort(k)}</div>
       <div class="breakdown-row"><span class="breakdown-key">Orders</span><span class="breakdown-val">${dayOrders.length}</span></div>
       <div class="breakdown-row"><span class="breakdown-key">Portions</span><span class="breakdown-val">${portions||'—'}</span></div>
@@ -836,7 +851,18 @@ function renderSummary(){
         ${canc?`<span class="bd-badge badge-cancelled">${canc} canc</span>`:''}
       </div>
     </div>`;
-  }).join('');
+  });
+  if(lastMonth) html += '</div></div>'; // close last group
+
+  breakdownEl.innerHTML = html;
+
+  // Auto-scroll active card into view
+  if(selectedDate){
+    setTimeout(()=>{
+      const active = document.getElementById('bcard_'+selectedDate);
+      if(active) active.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
+    }, 50);
+  }
 }
 
 function renderSelectedHeading(){
