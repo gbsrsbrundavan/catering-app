@@ -876,8 +876,7 @@ function venueBadge(type,other){
 
 function formatMenu(raw){
   if(!raw) return '';
-  const items=raw.split(/[
-,]/).map(s=>s.trim()).filter(Boolean);
+  const items=raw.split(/[\r\n,]+/).map(s=>s.trim()).filter(Boolean);
   if(!items.length) return '';
   if(items.length===1) return `<div class="menu-text">${esc(items[0])}</div>`;
   return `<ul class="menu-list">${items.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`;
