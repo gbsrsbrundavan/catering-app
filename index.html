@@ -106,6 +106,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 
 /* summary */
 .summary-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+.summary-row-split{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:12px}
+.stat-sub{font-size:11px;color:var(--text3);margin-top:3px}
 .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
 .stat-label{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
 .stat-value{font-size:22px;font-weight:600;line-height:1}
@@ -268,6 +270,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
   .form-row{grid-template-columns:1fr}
   .summary-row{gap:8px}
   .stat-value{font-size:18px}
+  .summary-row-split{gap:8px}
   .breakdown-card{min-width:130px}
   .info-grid{grid-template-columns:1fr}
   .cal-day{min-height:44px}
@@ -343,6 +346,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 
   <div class="app-body">
     <div class="summary-row" id="summary-row"></div>
+    <div class="summary-row-split" id="summary-row-split"></div>
 
     <!-- Date breakdown -->
     <div class="date-breakdown" id="date-breakdown" style="display:none">
@@ -816,10 +820,21 @@ function renderSummary(){
   const confirmed=all.filter(o=>o.order_status==='confirmed').length;
   const tentative=all.filter(o=>o.order_status==='tentative').length;
   const totalValue=all.filter(o=>o.order_status!=='cancelled').reduce((s,o)=>s+(parseFloat(o.quote_price)||0),0);
+  const volShare = totalValue * 0.6;
+  const mathaShare = totalValue * 0.4;
   document.getElementById('summary-row').innerHTML=`
     <div class="stat"><div class="stat-label">Confirmed</div><div class="stat-value green">${confirmed}</div></div>
     <div class="stat"><div class="stat-label">Tentative</div><div class="stat-value amber">${tentative}</div></div>
     <div class="stat"><div class="stat-label">Total quoted</div><div class="stat-value">£${totalValue.toFixed(2)}</div></div>`;
+  document.getElementById('summary-row-split').innerHTML=`
+    <div class="stat">
+      <div class="stat-label"><i class="ti ti-users" style="font-size:11px;vertical-align:-1px;margin-right:3px"></i>Volunteers (60%)</div>
+      <div class="stat-value" style="font-size:18px;color:var(--accent)">£${volShare.toFixed(2)}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label"><i class="ti ti-building-temple" style="font-size:11px;vertical-align:-1px;margin-right:3px"></i>Matha (40%)</div>
+      <div class="stat-value" style="font-size:18px;color:var(--green)">£${mathaShare.toFixed(2)}</div>
+    </div>`;
   renderBreakdown();
 }
 
