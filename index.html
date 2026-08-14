@@ -405,6 +405,9 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
       <button class="add-btn" id="add-order-btn" onclick="openModal()" style="display:none">
         <i class="ti ti-plus" aria-hidden="true"></i> Add order for this date
       </button>
+      <button class="add-btn" onclick="openCsvImport()" style="margin-top:8px;border-style:dashed;color:var(--text3)">
+        <i class="ti ti-file-upload" aria-hidden="true"></i> Import orders from CSV
+      </button>
     </div>
   </div>
 </div>
@@ -426,51 +429,67 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script>
-const SUPABASE_URL = 'https://cflqpqenxyctzgonowjw.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_pOm8E-dlRt6qrdjw8YVB2w_V_x5kgYk';
-const ADMIN_KEY    = 'gbsrs_admin_session';
-const VOL_KEY      = 'gbsrs_vol_session';
-const PIN_KEY      = 'gbsrs_pin';
-const VOL_PIN_KEY  = 'gbsrs_vol_pin';
-const VOL_PIN_DEFAULT = '0660'; // pre-set volunteer PIN
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDocs, setDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyC3vPar0wc4UindTlMWTn7wDb8dhQIfFyA",
+  authDomain: "gbsrs-catering.firebaseapp.com",
+  projectId: "gbsrs-catering",
+  storageBucket: "gbsrs-catering.firebasestorage.app",
+  messagingSenderId: "241255759678",
+  appId: "1:241255759678:web:9ac1acf6ab13d9aa32f66f"
+};
+
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
+
+// ── constants ──
+const ADMIN_KEY       = 'gbsrs_admin_session';
+const VOL_KEY         = 'gbsrs_vol_session';
+const PIN_KEY         = 'gbsrs_pin';
+const VOL_PIN_KEY     = 'gbsrs_vol_pin';
+const VOL_PIN_DEFAULT = '0660';
+const NOTIF_KEY       = 'gbsrs_notifications';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-let sb = null;
+// ── state ──
 let currentView = 'volunteer';
-let isAdmin = false;
+let isAdmin     = false;
 let isVolunteer = false;
-let orders = {};       // keyed by "YYYY-MM-DD"
-let volunteers = [];
-let venues = [];      // [{id, name, address}]
-let editId = null;
+let orders      = {};
+let volunteers  = [];
+let venues      = [];
+let editId      = null;
+let notifPanelOpen = false;
+let currentPinRole = 'volunteer';
 
 const today = new Date();
 let calYear  = today.getFullYear();
 let calMonth = today.getMonth();
-let selectedDate = null; // "YYYY-MM-DD" string
+let selectedDate = null;
+let pendingReason = '';
 
 // ── helpers ──
-function dateKey(y, m, d) {
-  return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-}
-function todayKey() { return dateKey(today.getFullYear(), today.getMonth(), today.getDate()); }
+function dateKey(y,m,d){ return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
+function todayKey(){ return dateKey(today.getFullYear(),today.getMonth(),today.getDate()); }
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function fmtDate(k){
   if(!k) return '';
-  const [y,m,d] = k.split('-').map(Number);
-  const dt = new Date(y,m-1,d);
-  return dt.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const [y,m,d]=k.split('-').map(Number);
+  return new Date(y,m-1,d).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+}
+function fmtDateShort(k){
+  if(!k) return '';
+  const [y,m,d]=k.split('-').map(Number);
+  return new Date(y,m-1,d).toLocaleDateString('en-GB',{day:'numeric',month:'short'});
 }
 
 // ── init ──
 (async function init(){
-  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
   if(!localStorage.getItem(VOL_PIN_KEY)) localStorage.setItem(VOL_PIN_KEY, VOL_PIN_DEFAULT);
   if(sessionStorage.getItem(ADMIN_KEY)==='true'){ isAdmin=true; isVolunteer=true; }
   else if(sessionStorage.getItem(VOL_KEY)==='true'){ isVolunteer=true; }
@@ -480,6 +499,7 @@ function fmtDate(k){
 
 async function loadAppData(){
   try {
+    document.getElementById('live-dot').style.background='var(--amber)';
     await Promise.all([loadVolunteers(), loadVenues(), loadOrders()]);
     setupRealtime();
     selectedDate = todayKey();
@@ -488,114 +508,112 @@ async function loadAppData(){
     renderAll();
     if(isAdmin){ document.getElementById('logout-btn').style.display='flex'; setView('admin'); }
   } catch(e){
-    console.error('loadAppData error:', e);
+    console.error('loadAppData error:',e);
     document.getElementById('app-screen').style.display='block';
     document.getElementById('login-screen').style.display='none';
-    document.getElementById('vol-orders').innerHTML =
-      '<div class="empty"><i class="ti ti-wifi-off" aria-hidden="true" style="color:var(--amber);font-size:36px"></i><p style="color:var(--text2);margin-top:8px">Could not load data.<br>Check your internet and <a href="javascript:location.reload()" style="color:var(--accent)">tap to retry</a>.</p></div>';
+    document.getElementById('vol-orders').innerHTML=
+      '<div class="empty"><i class="ti ti-wifi-off" style="color:var(--amber);font-size:36px"></i><p style="color:var(--text2);margin-top:8px">Could not load data.<br><a href="javascript:location.reload()" style="color:var(--accent)">Tap to retry</a></p></div>';
   }
 }
 
-// ── data ──
+// ── Firebase data ──
 async function loadOrders(){
-  const { data, error } = await sb.from('orders').select('*').order('created_at',{ascending:true});
-  if(error){ console.error('loadOrders',error); return; }
+  const snap = await getDocs(query(collection(db,'orders'), orderBy('created_at','asc')));
   orders = {};
-  (data||[]).forEach(o => {
-    if(!orders[o.date_id]) orders[o.date_id] = [];
-    // Supabase may return null for empty array columns — normalise
-    o.volunteers = Array.isArray(o.volunteers) ? o.volunteers : [];
+  snap.forEach(d=>{
+    const o = {id:d.id,...d.data()};
+    o.volunteers = Array.isArray(o.volunteers)?o.volunteers:[];
+    if(!orders[o.date_id]) orders[o.date_id]=[];
     orders[o.date_id].push(o);
   });
 }
 
 async function loadVolunteers(){
-  const { data } = await sb.from('volunteers').select('*').order('name');
-  volunteers = (data||[]).map(v=>v.name);
+  const snap = await getDocs(query(collection(db,'volunteers'), orderBy('name','asc')));
+  volunteers = snap.docs.map(d=>d.data().name);
+}
+
+async function loadVenues(){
+  const snap = await getDocs(query(collection(db,'venues'), orderBy('name','asc')));
+  venues = snap.docs.map(d=>({id:d.id,...d.data()}));
 }
 
 async function addVolunteer(){
   const name = document.getElementById('new-vol-name').value.trim();
   if(!name) return;
-  const { error } = await sb.from('volunteers').insert({name});
-  if(error){ showToast('Could not add volunteer'); return; }
-  document.getElementById('new-vol-name').value='';
-  await loadVolunteers();
-  renderVolManager();
-  showToast('Volunteer added');
+  try {
+    await addDoc(collection(db,'volunteers'),{name, created_at: new Date().toISOString()});
+    document.getElementById('new-vol-name').value='';
+    await loadVolunteers(); renderVolManager(); showToast('Volunteer added');
+  } catch(e){ showToast('Could not add volunteer'); }
 }
 
 async function removeVolunteer(name){
   if(!confirm('Remove '+name+' from the roster?')) return;
-  await sb.from('volunteers').delete().eq('name',name);
-  await loadVolunteers();
-  renderVolManager();
-  showToast('Volunteer removed');
-}
-
-// ── venues ──
-async function loadVenues(){
-  const{data}=await sb.from('venues').select('*').order('name');
-  venues=(data||[]);
+  const snap = await getDocs(collection(db,'volunteers'));
+  const docToDelete = snap.docs.find(d=>d.data().name===name);
+  if(docToDelete) await deleteDoc(doc(db,'volunteers',docToDelete.id));
+  await loadVolunteers(); renderVolManager(); showToast('Volunteer removed');
 }
 
 async function addVenue(){
-  const name=document.getElementById('new-venue-name').value.trim();
-  const address=document.getElementById('new-venue-addr').value.trim();
-  if(!name){showToast('Please enter a venue name');return;}
-  const{error}=await sb.from('venues').insert({name,address});
-  if(error){showToast('Could not add venue — run the venues SQL first');return;}
-  document.getElementById('new-venue-name').value='';
-  document.getElementById('new-venue-addr').value='';
-  await loadVenues();
-  renderVenueManager();
-  showToast('Venue added');
+  const name = document.getElementById('new-venue-name').value.trim();
+  const address = document.getElementById('new-venue-addr').value.trim();
+  if(!name){ showToast('Please enter a venue name'); return; }
+  try {
+    await addDoc(collection(db,'venues'),{name, address, created_at: new Date().toISOString()});
+    document.getElementById('new-venue-name').value='';
+    document.getElementById('new-venue-addr').value='';
+    await loadVenues(); renderVenueManager(); showToast('Venue added');
+  } catch(e){ showToast('Could not add venue'); }
 }
 
 async function removeVenue(id,name){
-  if(!confirm('Remove venue "'+name+'"?'))return;
-  await sb.from('venues').delete().eq('id',id);
-  await loadVenues();
-  renderVenueManager();
-  showToast('Venue removed');
+  if(!confirm('Remove venue "'+name+'"?')) return;
+  await deleteDoc(doc(db,'venues',id));
+  await loadVenues(); renderVenueManager(); showToast('Venue removed');
 }
 
-function renderVenueManager(){
-  const list=document.getElementById('venue-manager-list');
-  if(!list)return;
-  if(!venues.length){
-    list.innerHTML='<span style="font-size:13px;color:var(--text3)">No venues yet. Add your first venue above.</span>';
-    return;
-  }
-  list.innerHTML=venues.map(v=>`
-    <span class="venue-pill">
-      <span>
-        <div class="venue-pill-name">${esc(v.name)}</div>
-        ${v.address?`<div class="venue-pill-addr">${esc(v.address)}</div>`:''}
-      </span>
-      <button onclick="removeVenue('${v.id}','${esc(v.name)}')" aria-label="Remove ${esc(v.name)}"><i class="ti ti-x" aria-hidden="true" style="font-size:13px"></i></button>
-    </span>`).join('');
-}
-
-// ── realtime ──
+// ── Realtime ──
 function setupRealtime(){
-  try {
-    sb.channel('gbsrs-live')
-      .on('postgres_changes',{event:'*',schema:'public',table:'orders'}, async()=>{ await loadOrders(); renderAll(); })
-      .on('postgres_changes',{event:'*',schema:'public',table:'volunteers'}, async()=>{ await loadVolunteers(); renderVolManager(); })
-      .on('postgres_changes',{event:'*',schema:'public',table:'venues'}, async()=>{ await loadVenues(); renderVenueManager(); })
-      .subscribe(status=>{
-        const dot = document.getElementById('live-dot');
-        if(dot) dot.style.background = status==='SUBSCRIBED'?'var(--green)':'var(--amber)';
-      });
-  } catch(e){
-    console.warn('Realtime failed, polling',e);
-    setInterval(async()=>{ await loadOrders(); await loadVolunteers(); renderAll(); }, 15000);
-  }
+  // Orders
+  onSnapshot(collection(db,'orders'), snap=>{
+    snap.docChanges().forEach(change=>{
+      const o = {id:change.doc.id,...change.doc.data()};
+      o.volunteers = Array.isArray(o.volunteers)?o.volunteers:[];
+      if(change.type==='added'){
+        if(!orders[o.date_id]) orders[o.date_id]=[];
+        if(!orders[o.date_id].find(x=>x.id===o.id)) orders[o.date_id].push(o);
+        if(!o._initial) addNotification('New order added',`${o.client||'New order'} on ${fmtDateShort(o.date_id)} — ${o.portions||''} portions`,o.date_id);
+      } else if(change.type==='modified'){
+        if(orders[o.date_id]){
+          const idx=orders[o.date_id].findIndex(x=>x.id===o.id);
+          if(idx!==-1){ orders[o.date_id][idx]=o; addNotification('Order updated',`${o.client||'An order'} on ${fmtDateShort(o.date_id)} has been updated`,o.date_id); }
+        }
+      } else if(change.type==='removed'){
+        if(orders[o.date_id]){
+          addNotification('Order removed',`${o.client||'An order'} on ${fmtDateShort(o.date_id)||''} was deleted`,o.date_id);
+          orders[o.date_id]=orders[o.date_id].filter(x=>x.id!==o.id);
+        }
+      }
+    });
+    renderAll();
+    document.getElementById('live-dot').style.background='var(--green)';
+  }, err=>{ console.error(err); document.getElementById('live-dot').style.background='var(--amber)'; });
+
+  // Volunteers
+  onSnapshot(collection(db,'volunteers'), async ()=>{ await loadVolunteers(); renderVolManager(); });
+  // Venues
+  onSnapshot(collection(db,'venues'), async ()=>{ await loadVenues(); renderVenueManager(); });
 }
 
-// ── admin auth ──
-let currentPinRole = 'volunteer'; // 'volunteer' or 'admin'
+// ── Admin auth ──
+function requireAdmin(){
+  if(isAdmin){ setView('admin'); return; }
+  document.getElementById('app-screen').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+  showPinPanel('admin');
+}
 
 function showRoleSelect(){
   document.getElementById('role-select-panel').style.display='';
@@ -605,50 +623,39 @@ function showRoleSelect(){
 }
 
 function showPinPanel(role){
-  currentPinRole = role;
+  currentPinRole=role;
   document.getElementById('role-select-panel').style.display='none';
   document.getElementById('pin-entry-panel').style.display='';
-  const isAdmin = role==='admin';
-  const icon = document.getElementById('pin-role-icon');
-  icon.innerHTML = isAdmin?'<i class="ti ti-settings" aria-hidden="true"></i>':'<i class="ti ti-users" aria-hidden="true"></i>';
-  icon.style.background = isAdmin?'var(--accent-bg)':'var(--green-bg)';
-  icon.style.color = isAdmin?'var(--accent)':'var(--green)';
-  document.getElementById('pin-role-title').textContent = isAdmin?'Admin login':'Volunteer login';
-  const storedPin = localStorage.getItem(isAdmin?PIN_KEY:VOL_PIN_KEY);
-  document.getElementById('login-sub').textContent = storedPin
-    ? (isAdmin?'Enter your admin PIN':'Enter your volunteer PIN')
-    : 'First time? Set a new 4-digit PIN.';
-  document.getElementById('pin-login-btn').textContent = isAdmin?'Enter admin area':'View orders';
-  document.getElementById('forgot-pin-link').style.display = isAdmin?'inline':'none';
+  const adm=role==='admin';
+  const icon=document.getElementById('pin-role-icon');
+  icon.innerHTML=adm?'<i class="ti ti-settings" aria-hidden="true"></i>':'<i class="ti ti-users" aria-hidden="true"></i>';
+  icon.style.background=adm?'var(--accent-bg)':'var(--green-bg)';
+  icon.style.color=adm?'var(--accent)':'var(--green)';
+  document.getElementById('pin-role-title').textContent=adm?'Admin login':'Volunteer login';
+  const stored=localStorage.getItem(adm?PIN_KEY:VOL_PIN_KEY);
+  document.getElementById('login-sub').textContent=stored?(adm?'Enter your admin PIN':'Enter your volunteer PIN'):'First time? Set a new 4-digit PIN.';
+  document.getElementById('pin-login-btn').textContent=adm?'Enter admin area':'View orders';
+  document.getElementById('forgot-pin-link').style.display=adm?'inline':'none';
   document.getElementById('login-error').textContent='';
   setTimeout(()=>document.getElementById('p0').focus(),100);
 }
 
-function requireAdmin(){
-  if(isAdmin){ setView('admin'); return; }
-  document.getElementById('app-screen').style.display='none';
-  document.getElementById('login-screen').style.display='flex';
-  showPinPanel('admin');
-}
-
 function pinInput(i){
-  const v = document.getElementById('p'+i).value;
-  if(v && i<3) document.getElementById('p'+(i+1)).focus();
-  if(i===3 && v) checkPin();
+  const v=document.getElementById('p'+i).value;
+  if(v&&i<3) document.getElementById('p'+(i+1)).focus();
+  if(i===3&&v) checkPin();
 }
 function pinKey(e,i){
-  if(e.key==='Backspace' && !document.getElementById('p'+i).value && i>0)
-    document.getElementById('p'+(i-1)).focus();
+  if(e.key==='Backspace'&&!document.getElementById('p'+i).value&&i>0) document.getElementById('p'+(i-1)).focus();
 }
 
 function checkPin(){
-  const pin = [0,1,2,3].map(i=>document.getElementById('p'+i).value).join('');
-  const storageKey = currentPinRole==='admin'?PIN_KEY:VOL_PIN_KEY;
-  const stored = localStorage.getItem(storageKey);
+  const pin=[0,1,2,3].map(i=>document.getElementById('p'+i).value).join('');
+  const storageKey=currentPinRole==='admin'?PIN_KEY:VOL_PIN_KEY;
+  const stored=localStorage.getItem(storageKey);
   if(!stored){
     if(!/^\d{4}$/.test(pin)){ document.getElementById('login-error').textContent='Enter exactly 4 digits.'; return; }
-    localStorage.setItem(storageKey, pin);
-    doLogin();
+    localStorage.setItem(storageKey,pin); doLogin();
   } else {
     if(pin===stored){ doLogin(); }
     else {
@@ -661,176 +668,166 @@ function checkPin(){
 
 async function doLogin(){
   if(currentPinRole==='admin'){
-    sessionStorage.setItem(ADMIN_KEY,'true');
-    sessionStorage.setItem(VOL_KEY,'true');
-    isAdmin = true;
-    isVolunteer = true;
+    sessionStorage.setItem(ADMIN_KEY,'true'); sessionStorage.setItem(VOL_KEY,'true');
+    isAdmin=true; isVolunteer=true;
   } else {
-    sessionStorage.setItem(VOL_KEY,'true');
-    isVolunteer = true;
-    isAdmin = false;
+    sessionStorage.setItem(VOL_KEY,'true'); isVolunteer=true; isAdmin=false;
   }
   await loadAppData();
-  if(currentPinRole==='admin') setView('admin');
-  else setView('volunteer');
+  setView(currentPinRole==='admin'?'admin':'volunteer');
 }
 
 function logoutAdmin(){
-  sessionStorage.removeItem(ADMIN_KEY);
-  sessionStorage.removeItem(VOL_KEY);
-  isAdmin = false;
-  isVolunteer = false;
+  sessionStorage.removeItem(ADMIN_KEY); sessionStorage.removeItem(VOL_KEY);
+  isAdmin=false; isVolunteer=false;
   document.getElementById('logout-btn').style.display='none';
   document.getElementById('app-screen').style.display='none';
   document.getElementById('login-screen').style.display='flex';
   showRoleSelect();
 }
+function goVolView(){ showRoleSelect(); }
 
-function goVolView(){
-  // no longer used — kept for compat
-  showRoleSelect();
+// ── Forgot PIN ──
+function showForgotPin(){
+  document.getElementById('modal-body').innerHTML=`
+    <div style="text-align:center">
+      <div style="width:48px;height:48px;border-radius:12px;background:var(--amber-bg);color:var(--amber);display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 16px"><i class="ti ti-key"></i></div>
+      <div style="font-size:16px;font-weight:600;margin-bottom:6px">Reset admin PIN</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.5">Enter the reset passphrase to clear the current PIN.</div>
+      <div class="form-group" style="text-align:left">
+        <label class="form-label">Reset passphrase</label>
+        <input id="reset-phrase" type="password" placeholder="Enter passphrase" onkeydown="if(event.key==='Enter')confirmReset()">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="btn-sm" onclick="closeResetModal()" style="flex:1;justify-content:center">Cancel</button>
+        <button class="btn-primary" onclick="confirmReset()" style="flex:2;margin-top:0">Reset PIN</button>
+      </div>
+    </div>`;
+  document.getElementById('modal-backdrop').classList.add('open');
+  setTimeout(()=>document.getElementById('reset-phrase').focus(),100);
 }
 
-// ── view ──
+const RESET_PHRASE='brundavan2025';
+function confirmReset(){
+  const phrase=(document.getElementById('reset-phrase').value||'').trim().toLowerCase();
+  if(phrase!==RESET_PHRASE){
+    document.getElementById('reset-phrase').value='';
+    document.getElementById('reset-phrase').style.borderColor='var(--red)';
+    setTimeout(()=>{ const el=document.getElementById('reset-phrase'); if(el) el.style.borderColor=''; },2000);
+    return;
+  }
+  localStorage.removeItem(PIN_KEY);
+  closeResetModal();
+  document.getElementById('login-sub').textContent='PIN cleared. Set a new 4-digit PIN.';
+  [0,1,2,3].forEach(i=>{ const el=document.getElementById('p'+i); if(el) el.value=''; });
+  document.getElementById('login-error').textContent='';
+  showToast('Admin PIN reset — set a new one now');
+  setTimeout(()=>{ const p=document.getElementById('p0'); if(p) p.focus(); },300);
+}
+function closeResetModal(){ document.getElementById('modal-backdrop').classList.remove('open'); }
+
+// ── View ──
 function setView(v){
-  currentView = v;
-  document.getElementById('vol-view').style.display = v==='volunteer'?'':'none';
-  document.getElementById('adm-view').style.display = v==='admin'?'':'none';
+  currentView=v;
+  document.getElementById('vol-view').style.display=v==='volunteer'?'':'none';
+  document.getElementById('adm-view').style.display=v==='admin'?'':'none';
   document.getElementById('tab-vol').className='vs-btn'+(v==='volunteer'?' active':'');
   document.getElementById('tab-adm').className='vs-btn'+(v==='admin'?' active':'');
   renderOrders();
 }
 
-// ── calendar ──
+// ── Calendar ──
 function changeMonth(delta){
-  calMonth += delta;
-  if(calMonth<0){ calMonth=11; calYear--; }
-  if(calMonth>11){ calMonth=0; calYear++; }
+  calMonth+=delta;
+  if(calMonth<0){calMonth=11;calYear--;}
+  if(calMonth>11){calMonth=0;calYear++;}
   renderCalendar();
 }
-
-function goToday(){
-  calYear = today.getFullYear();
-  calMonth = today.getMonth();
-  selectedDate = todayKey();
-  renderAll();
-}
-
+function goToday(){ calYear=today.getFullYear(); calMonth=today.getMonth(); selectedDate=todayKey(); renderAll(); }
 function selectDate(key){
-  selectedDate = key;
-  renderCalendar();
-  renderSelectedHeading();
-  renderOrders();
-  const addBtn = document.getElementById('add-order-btn');
-  if(addBtn) addBtn.style.display = selectedDate ? 'flex' : 'none';
+  selectedDate=key;
+  const [y,m]=key.split('-').map(Number);
+  calYear=y; calMonth=m-1;
+  renderCalendar(); renderSelectedHeading(); renderOrders();
+  const addBtn=document.getElementById('add-order-btn');
+  if(addBtn) addBtn.style.display=selectedDate?'flex':'none';
 }
 
 function renderCalendar(){
-  document.getElementById('cal-title').textContent = MONTHS[calMonth]+' '+calYear;
-
-  const firstDay = new Date(calYear, calMonth, 1).getDay();
-  const daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
-  const daysInPrev  = new Date(calYear, calMonth, 0).getDate();
-
-  let html = DAYS.map(d=>`<div class="cal-dow">${d}</div>`).join('');
-
-  const todayK = todayKey();
-  let cellCount = 0;
-
-  // prev month filler
-  for(let i=firstDay-1; i>=0; i--){
-    const d = daysInPrev - i;
-    const key = dateKey(calMonth===0?calYear-1:calYear, calMonth===0?11:calMonth-1, d);
-    html += calDayHTML(key, d, true);
-    cellCount++;
+  document.getElementById('cal-title').textContent=MONTHS[calMonth]+' '+calYear;
+  const firstDay=new Date(calYear,calMonth,1).getDay();
+  const daysInMonth=new Date(calYear,calMonth+1,0).getDate();
+  const daysInPrev=new Date(calYear,calMonth,0).getDate();
+  let html=DAYS.map(d=>`<div class="cal-dow">${d}</div>`).join('');
+  let cellCount=0;
+  for(let i=firstDay-1;i>=0;i--){
+    const d=daysInPrev-i;
+    const key=dateKey(calMonth===0?calYear-1:calYear,calMonth===0?11:calMonth-1,d);
+    html+=calDayHTML(key,d,true); cellCount++;
   }
-
-  // current month
-  for(let d=1; d<=daysInMonth; d++){
-    const key = dateKey(calYear, calMonth, d);
-    html += calDayHTML(key, d, false);
-    cellCount++;
+  for(let d=1;d<=daysInMonth;d++){
+    const key=dateKey(calYear,calMonth,d);
+    html+=calDayHTML(key,d,false); cellCount++;
   }
-
-  // next month filler
-  const remaining = (7 - (cellCount % 7)) % 7;
-  for(let d=1; d<=remaining; d++){
-    const key = dateKey(calMonth===11?calYear+1:calYear, calMonth===11?0:calMonth+1, d);
-    html += calDayHTML(key, d, true);
+  const remaining=(7-(cellCount%7))%7;
+  for(let d=1;d<=remaining;d++){
+    const key=dateKey(calMonth===11?calYear+1:calYear,calMonth===11?0:calMonth+1,d);
+    html+=calDayHTML(key,d,true);
   }
-
-  document.getElementById('cal-grid').innerHTML = html;
+  document.getElementById('cal-grid').innerHTML=html;
 }
 
-function calDayHTML(key, d, otherMonth){
-  const todayK = todayKey();
-  const dayOrders = orders[key]||[];
-  const dots = dayOrders.map(o=>`<span class="cal-dot ${o.order_status||'confirmed'}"></span>`).join('');
-
-  let cls = 'cal-day';
-  if(otherMonth) cls += ' other-month';
-  if(key===todayK) cls += ' today';
-  if(key===selectedDate) cls += ' selected';
-
+function calDayHTML(key,d,otherMonth){
+  const todayK=todayKey();
+  const dayOrders=orders[key]||[];
+  const dots=dayOrders.map(o=>`<span class="cal-dot ${o.order_status||'confirmed'}"></span>`).join('');
+  let cls='cal-day';
+  if(otherMonth) cls+=' other-month';
+  if(key===todayK) cls+=' today';
+  if(key===selectedDate) cls+=' selected';
   return `<div class="${cls}" onclick="selectDate('${key}')">
     <span class="cal-day-num">${d}</span>
     ${dots?`<div class="cal-dots">${dots}</div>`:''}
   </div>`;
 }
 
-// ── summary ──
-function fmtDateShort(k){
-  if(!k) return '';
-  const [y,m,d]=k.split('-').map(Number);
-  return new Date(y,m-1,d).toLocaleDateString('en-GB',{day:'numeric',month:'short'});
-}
-
+// ── Summary ──
 function renderSummary(){
-  const all = Object.values(orders).flat();
-  const confirmed  = all.filter(o=>o.order_status==='confirmed').length;
-  const tentative  = all.filter(o=>o.order_status==='tentative').length;
-  const totalValue = all.filter(o=>o.order_status!=='cancelled').reduce((s,o)=>s+(parseFloat(o.quote_price)||0),0);
-
-  document.getElementById('summary-row').innerHTML = `
+  const all=Object.values(orders).flat();
+  const confirmed=all.filter(o=>o.order_status==='confirmed').length;
+  const tentative=all.filter(o=>o.order_status==='tentative').length;
+  const totalValue=all.filter(o=>o.order_status!=='cancelled').reduce((s,o)=>s+(parseFloat(o.quote_price)||0),0);
+  document.getElementById('summary-row').innerHTML=`
     <div class="stat"><div class="stat-label">Confirmed</div><div class="stat-value green">${confirmed}</div></div>
     <div class="stat"><div class="stat-label">Tentative</div><div class="stat-value amber">${tentative}</div></div>
     <div class="stat"><div class="stat-label">Total quoted</div><div class="stat-value">£${totalValue.toFixed(2)}</div></div>`;
+  renderBreakdown();
+}
 
-  const breakdownEl = document.getElementById('date-breakdown');
+function renderBreakdown(){
+  const breakdownEl=document.getElementById('date-breakdown');
   if(!breakdownEl) return;
-
-  // Only real date keys (YYYY-MM-DD format) — skip any legacy IDs like d1, d2 etc
-  const datesWithOrders = Object.keys(orders)
-    .filter(k => /^\d{4}-\d{2}-\d{2}$/.test(k) && orders[k].length > 0)
-    .sort();
-
-  if(!datesWithOrders.length){
-    breakdownEl.style.display='none';
-    return;
-  }
+  const datesWithOrders=Object.keys(orders)
+    .filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)&&orders[k].length>0).sort();
+  if(!datesWithOrders.length){ breakdownEl.style.display='none'; return; }
   breakdownEl.style.display='';
-
-  // Group dates by month for section headers
-  let html = '';
-  let lastMonth = '';
-  datesWithOrders.forEach(k => {
-    const [y,m] = k.split('-').map(Number);
-    const monthLabel = new Date(y,m-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});
-    if(monthLabel !== lastMonth){
-      if(lastMonth) html += '</div>'; // close previous month group
-      html += `<div class="breakdown-month-group">
-        <div class="breakdown-month-label">${monthLabel}</div>
-        <div class="breakdown-month-scroll" id="bscroll_${y}_${m}">`;
-      lastMonth = monthLabel;
+  let html='';
+  let lastMonth='';
+  datesWithOrders.forEach(k=>{
+    const [y,m]=k.split('-').map(Number);
+    const monthLabel=new Date(y,m-1,1).toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+    if(monthLabel!==lastMonth){
+      if(lastMonth) html+='</div></div>';
+      html+=`<div class="breakdown-month-group"><div class="breakdown-month-label">${monthLabel}</div><div class="breakdown-month-scroll">`;
+      lastMonth=monthLabel;
     }
-    const dayOrders = orders[k];
-    const portions  = dayOrders.filter(o=>o.order_status!=='cancelled').reduce((s,o)=>s+(parseInt(o.portions)||0),0);
-    const value     = dayOrders.filter(o=>o.order_status!=='cancelled').reduce((s,o)=>s+(parseFloat(o.quote_price)||0),0);
-    const conf      = dayOrders.filter(o=>o.order_status==='confirmed').length;
-    const tent      = dayOrders.filter(o=>o.order_status==='tentative').length;
-    const canc      = dayOrders.filter(o=>o.order_status==='cancelled').length;
-    const isActive  = k===selectedDate;
-    html += `<div class="breakdown-card ${isActive?'active':''}" id="bcard_${k}" onclick="selectDate('${k}')">
+    const dayOrders=orders[k];
+    const portions=dayOrders.filter(o=>o.order_status!=='cancelled').reduce((s,o)=>s+(parseInt(o.portions)||0),0);
+    const value=dayOrders.filter(o=>o.order_status!=='cancelled').reduce((s,o)=>s+(parseFloat(o.quote_price)||0),0);
+    const conf=dayOrders.filter(o=>o.order_status==='confirmed').length;
+    const tent=dayOrders.filter(o=>o.order_status==='tentative').length;
+    const canc=dayOrders.filter(o=>o.order_status==='cancelled').length;
+    html+=`<div class="breakdown-card ${k===selectedDate?'active':''}" id="bcard_${k}" onclick="selectDate('${k}')">
       <div class="breakdown-date">${fmtDateShort(k)}</div>
       <div class="breakdown-row"><span class="breakdown-key">Orders</span><span class="breakdown-val">${dayOrders.length}</span></div>
       <div class="breakdown-row"><span class="breakdown-key">Portions</span><span class="breakdown-val">${portions||'—'}</span></div>
@@ -842,64 +839,58 @@ function renderSummary(){
       </div>
     </div>`;
   });
-  if(lastMonth) html += '</div></div>'; // close last group
-
-  breakdownEl.innerHTML = html;
-
-  // Auto-scroll active card into view
+  if(lastMonth) html+='</div></div>';
+  breakdownEl.innerHTML='<div class="breakdown-title">By date</div>'+html;
   if(selectedDate){
     setTimeout(()=>{
-      const active = document.getElementById('bcard_'+selectedDate);
+      const active=document.getElementById('bcard_'+selectedDate);
       if(active) active.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
-    }, 50);
+    },50);
   }
 }
 
+// ── Render ──
 function renderSelectedHeading(){
-  const lbl = document.getElementById('selected-label');
-  const sub  = document.getElementById('selected-sub');
+  const lbl=document.getElementById('selected-label');
+  const sub=document.getElementById('selected-sub');
   if(!selectedDate){ lbl.textContent='Select a date'; sub.textContent=''; return; }
-  lbl.textContent = fmtDate(selectedDate);
-  const n = (orders[selectedDate]||[]).length;
-  sub.textContent = n ? n+' order'+(n!==1?'s':'') : 'No orders yet';
+  lbl.textContent=fmtDate(selectedDate);
+  const n=(orders[selectedDate]||[]).length;
+  sub.textContent=n?n+' order'+(n!==1?'s':''):'No orders yet';
 }
 
-// ── order badges ──
 function statusBadge(s){
   const m={confirmed:['badge-confirmed','Confirmed'],tentative:['badge-tentative','Tentative'],cancelled:['badge-cancelled','Cancelled']};
   const[cls,lbl]=m[s]||m.confirmed;
   return `<span class="badge ${cls}">${lbl}</span>`;
 }
-function venueBadge(type, other){
+
+function venueBadge(type,other){
   let label;
   if(type==='__temple__'||type==='temple'||!type) label='Temple';
   else if(type==='__devotee__'||type==='devotee') label="Devotee's house";
   else if(type==='__other__'||type==='other') label=other||'Other venue';
-  else {
-    const v=venues.find(x=>x.id===type);
-    label=v?v.name:(other||'Venue');
-  }
-  return `<span class="badge badge-venue"><i class="ti ti-map-pin" aria-hidden="true" style="font-size:11px;vertical-align:-1px;margin-right:3px"></i>${esc(label)}</span>`;
+  else { const v=venues.find(x=>x.id===type); label=v?v.name:(other||'Venue'); }
+  return `<span class="badge badge-venue"><i class="ti ti-map-pin" style="font-size:11px;vertical-align:-1px;margin-right:3px"></i>${esc(label)}</span>`;
 }
 
-// ── order card ──
 function formatMenu(raw){
   if(!raw) return '';
-  // Split by newline or comma, clean up each item
-  const items = raw.split(/[\n,]/).map(s=>s.trim()).filter(Boolean);
+  const items=raw.split(/[
+,]/).map(s=>s.trim()).filter(Boolean);
   if(!items.length) return '';
-  if(items.length === 1) return `<div class="menu-text">${esc(items[0])}</div>`;
+  if(items.length===1) return `<div class="menu-text">${esc(items[0])}</div>`;
   return `<ul class="menu-list">${items.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`;
 }
 
-function orderCard(o, admin){
-  const vols=(o.volunteers||[]).map(v=>`<span class="vol-tag"><i class="ti ti-user" aria-hidden="true" style="font-size:11px"></i>${esc(v)}</span>`).join('');
+function orderCard(o,admin){
+  const vols=(o.volunteers||[]).map(v=>`<span class="vol-tag"><i class="ti ti-user" style="font-size:11px"></i>${esc(v)}</span>`).join('');
   return `<div class="order-card">
     <div class="card-top">
       <div style="min-width:0">
         <div class="card-title">${esc(o.client)}</div>
-        ${o.devotee_name?`<div style="font-size:13px;color:var(--text2);margin-top:2px"><i class="ti ti-user-circle" aria-hidden="true" style="font-size:13px;vertical-align:-1px;margin-right:4px"></i>${esc(o.devotee_name)}</div>`:''}
-        <div class="card-subtitle"><i class="ti ti-clock" aria-hidden="true" style="font-size:13px"></i>${esc(o.time_slot||'Time TBC')}</div>
+        ${o.devotee_name?`<div style="font-size:13px;color:var(--text2);margin-top:2px"><i class="ti ti-user-circle" style="font-size:13px;vertical-align:-1px;margin-right:4px"></i>${esc(o.devotee_name)}</div>`:''}
+        <div class="card-subtitle"><i class="ti ti-clock" style="font-size:13px"></i>${esc(o.time_slot||'Time TBC')}</div>
       </div>
       <div class="badges">${statusBadge(o.order_status)}${venueBadge(o.venue_type,o.venue_other)}</div>
     </div>
@@ -911,135 +902,109 @@ function orderCard(o, admin){
     ${o.menu?`<hr class="divider"><div class="eyebrow">Menu</div>${formatMenu(o.menu)}`:''}
     <hr class="divider">
     <div class="eyebrow">Volunteers assigned</div>
-    ${vols
-      ? `<div class="vol-list" style="margin-top:2px">${vols}</div>`
-      : `<div style="font-size:13px;color:var(--text3);font-style:italic;margin-top:4px">No volunteers assigned yet</div>`
-    }
-    ${o.notes?`<div class="notes-box" style="margin-top:12px"><i class="ti ti-notes" aria-hidden="true"></i><span>${esc(o.notes)}</span></div>`:''}
+    ${vols?`<div class="vol-list" style="margin-top:2px">${vols}</div>`:`<div style="font-size:13px;color:var(--text3);font-style:italic;margin-top:4px">No volunteers assigned yet</div>`}
+    ${o.notes?`<div class="notes-box" style="margin-top:12px"><i class="ti ti-notes"></i><span>${esc(o.notes)}</span></div>`:''}
     ${admin?`<div class="card-actions">
-      <button class="btn-sm" onclick="viewChangeLog('${o.id}','${esc(o.client)}')"><i class="ti ti-history" aria-hidden="true" style="font-size:14px"></i> History</button>
-      <button class="btn-sm danger" onclick="deleteOrder('${o.id}')"><i class="ti ti-trash" aria-hidden="true" style="font-size:14px"></i> Delete</button>
-      <button class="btn-sm" onclick="editOrder('${o.id}')"><i class="ti ti-edit" aria-hidden="true" style="font-size:14px"></i> Edit</button>
+      <button class="btn-sm" onclick="viewChangeLog('${o.id}','${esc(o.client)}')"><i class="ti ti-history" style="font-size:14px"></i> History</button>
+      <button class="btn-sm danger" onclick="deleteOrder('${o.id}')"><i class="ti ti-trash" style="font-size:14px"></i> Delete</button>
+      <button class="btn-sm" onclick="editOrder('${o.id}')"><i class="ti ti-edit" style="font-size:14px"></i> Edit</button>
     </div>`:''}
   </div>`;
 }
 
-// ── render orders ──
+function renderVolManager(){
+  const list=document.getElementById('vol-manager-list');
+  if(!list) return;
+  list.innerHTML=volunteers.length
+    ?volunteers.map(v=>`<span class="vol-pill"><i class="ti ti-user" style="font-size:13px;color:var(--accent)"></i>${esc(v)}<button onclick="removeVolunteer('${esc(v)}')" aria-label="Remove ${esc(v)}"><i class="ti ti-x" style="font-size:13px"></i></button></span>`).join('')
+    :`<span style="font-size:13px;color:var(--text3)">No volunteers yet.</span>`;
+}
+
+function renderVenueManager(){
+  const list=document.getElementById('venue-manager-list');
+  if(!list) return;
+  if(!venues.length){ list.innerHTML='<span style="font-size:13px;color:var(--text3)">No venues yet. Add your first venue above.</span>'; return; }
+  list.innerHTML=venues.map(v=>`
+    <span class="venue-pill">
+      <span><div class="venue-pill-name">${esc(v.name)}</div>${v.address?`<div class="venue-pill-addr">${esc(v.address)}</div>`:''}</span>
+      <button onclick="removeVenue('${v.id}','${esc(v.name)}')" aria-label="Remove ${esc(v.name)}"><i class="ti ti-x" style="font-size:13px"></i></button>
+    </span>`).join('');
+}
+
 function renderOrders(){
   renderSelectedHeading();
-  const all = orders[selectedDate]||[];
-  const volOrders = all.filter(o=>o.order_status!=='cancelled');
-
+  const all=orders[selectedDate]||[];
+  const volOrders=all.filter(o=>o.order_status!=='cancelled');
   if(currentView==='volunteer'){
-    document.getElementById('vol-orders').innerHTML = !selectedDate
-      ? `<div class="empty"><i class="ti ti-calendar" aria-hidden="true"></i><p>Tap a date on the calendar to see orders.</p></div>`
-      : volOrders.length
-        ? volOrders.map(o=>orderCard(o,false)).join('')
-        : `<div class="empty"><i class="ti ti-calendar-off" aria-hidden="true"></i><p>No confirmed orders for this date.</p></div>`;
+    document.getElementById('vol-orders').innerHTML=!selectedDate
+      ?`<div class="empty"><i class="ti ti-calendar"></i><p>Tap a date on the calendar to see orders.</p></div>`
+      :volOrders.length?volOrders.map(o=>orderCard(o,false)).join('')
+      :`<div class="empty"><i class="ti ti-calendar-off"></i><p>No confirmed orders for this date.</p></div>`;
   }
-
-  const admEl = document.getElementById('adm-orders');
+  const admEl=document.getElementById('adm-orders');
   if(admEl){
-    admEl.innerHTML = !selectedDate
-      ? `<div class="empty" style="padding:20px 0"><p style="color:var(--text3);font-size:14px">Tap a date on the calendar to view or add orders.</p></div>`
-      : all.length
-        ? all.map(o=>orderCard(o,true)).join('')
-        : `<div class="empty" style="padding:20px 0"><p style="color:var(--text3);font-size:14px">No orders for this date yet.</p></div>`;
-    const addBtn = document.getElementById('add-order-btn');
-    if(addBtn) addBtn.style.display = selectedDate ? 'flex' : 'none';
+    admEl.innerHTML=!selectedDate
+      ?`<div class="empty" style="padding:20px 0"><p style="color:var(--text3);font-size:14px">Tap a date on the calendar to view or add orders.</p></div>`
+      :all.length?all.map(o=>orderCard(o,true)).join('')
+      :`<div class="empty" style="padding:20px 0"><p style="color:var(--text3);font-size:14px">No orders for this date yet.</p></div>`;
+    const addBtn=document.getElementById('add-order-btn');
+    if(addBtn) addBtn.style.display=selectedDate?'flex':'none';
   }
 }
 
-function renderVolManager(){
-  const list = document.getElementById('vol-manager-list');
-  if(!list) return;
-  list.innerHTML = volunteers.length
-    ? volunteers.map(v=>`<span class="vol-pill"><i class="ti ti-user" aria-hidden="true" style="font-size:13px;color:var(--accent)"></i>${esc(v)}<button onclick="removeVolunteer('${esc(v)}')" aria-label="Remove ${esc(v)}"><i class="ti ti-x" aria-hidden="true" style="font-size:13px"></i></button></span>`).join('')
-    : `<span style="font-size:13px;color:var(--text3)">No volunteers yet. Add names above.</span>`;
-}
+function renderAll(){ renderSummary(); renderCalendar(); renderSelectedHeading(); renderOrders(); renderVolManager(); renderVenueManager(); renderNotifBadge(); }
 
-function renderAll(){
-  renderSummary();
-  renderCalendar();
-  renderSelectedHeading();
-  renderOrders();
-  renderVolManager();
-  renderVenueManager();
-  renderNotifBadge();
-}
-
-// ── modal ──
+// ── Modal ──
 function buildVolCheckboxes(selected){
-  if(!volunteers.length) return `<p style="font-size:13px;color:var(--text3)">No volunteers in roster yet. Add them in Admin → Volunteer roster.</p>`;
+  if(!volunteers.length) return `<p style="font-size:13px;color:var(--text3)">No volunteers in roster yet.</p>`;
   return `<div class="vol-select-grid" id="vol-checkbox-grid">${volunteers.map((v,i)=>{
     const sel=(selected||[]).includes(v);
     const uid='vc_'+i;
     return `<div class="vol-check-item ${sel?'selected':''}" id="vci_${i}" onclick="toggleVolCheck(${i})">
       <input type="checkbox" id="${uid}" ${sel?'checked':''} data-vol="${esc(v)}" style="display:none">
-      <span class="check-icon" id="vck_${i}">${sel?'<i class="ti ti-check" aria-hidden="true" style="font-size:11px"></i>':''}</span>
+      <span class="check-icon" id="vck_${i}">${sel?'<i class="ti ti-check" style="font-size:11px"></i>':''}</span>
       <span class="vol-check-name">${esc(v)}</span>
     </div>`;
   }).join('')}</div>`;
 }
 
 function toggleVolCheck(i){
-  const item = document.getElementById('vci_'+i);
-  const cb   = item.querySelector('input[type=checkbox]');
-  const icon = document.getElementById('vck_'+i);
-  cb.checked = !cb.checked;
-  if(cb.checked){
-    item.classList.add('selected');
-    icon.innerHTML='<i class="ti ti-check" aria-hidden="true" style="font-size:11px"></i>';
-  } else {
-    item.classList.remove('selected');
-    icon.innerHTML='';
-  }
+  const item=document.getElementById('vci_'+i);
+  const cb=item.querySelector('input[type=checkbox]');
+  const icon=document.getElementById('vck_'+i);
+  cb.checked=!cb.checked;
+  if(cb.checked){ item.classList.add('selected'); icon.innerHTML='<i class="ti ti-check" style="font-size:11px"></i>'; }
+  else { item.classList.remove('selected'); icon.innerHTML=''; }
 }
 
 function getSelectedVols(){
-  const grid = document.getElementById('vol-checkbox-grid');
+  const grid=document.getElementById('vol-checkbox-grid');
   if(!grid) return [];
   return [...grid.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.dataset.vol);
 }
 
 function openModal(prefill){
-  editId = prefill?prefill.id:null;
-  const f = prefill||{};
-  const dateLabel = selectedDate ? fmtDate(selectedDate) : 'No date selected';
-  document.getElementById('modal-body').innerHTML = `
+  editId=prefill?prefill.id:null;
+  const f=prefill||{};
+  const dateLabel=selectedDate?fmtDate(selectedDate):'No date selected';
+  document.getElementById('modal-body').innerHTML=`
     <div class="modal-head">
       <span class="modal-title">${editId?'Edit order':'New order'}</span>
-      <button class="close-btn" onclick="closeModal()" aria-label="Close"><i class="ti ti-x" aria-hidden="true"></i></button>
+      <button class="close-btn" onclick="closeModal()" aria-label="Close"><i class="ti ti-x"></i></button>
     </div>
-    <div style="font-size:13px;color:var(--accent);font-weight:500;margin-bottom:16px;display:flex;align-items:center;gap:6px"><i class="ti ti-calendar" aria-hidden="true" style="font-size:14px"></i>${esc(dateLabel)}</div>
-    <div class="form-group">
-      <label class="form-label">Devotee name</label>
-      <input id="f-devotee" type="text" placeholder="Name of the devotee" value="${esc(f.devotee_name||'')}">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Event / occasion <span class="required">*</span></label>
-      <input id="f-client" type="text" placeholder="e.g. Birthday puja, Grihapravesh, Satyanarayana puja" value="${esc(f.client||'')}">
-    </div>
+    <div style="font-size:13px;color:var(--accent);font-weight:500;margin-bottom:16px;display:flex;align-items:center;gap:6px"><i class="ti ti-calendar" style="font-size:14px"></i>${esc(dateLabel)}</div>
+    <div class="form-group"><label class="form-label">Devotee name</label><input id="f-devotee" type="text" placeholder="Name of the devotee" value="${esc(f.devotee_name||'')}"></div>
+    <div class="form-group"><label class="form-label">Event / occasion <span class="required">*</span></label><input id="f-client" type="text" placeholder="e.g. Birthday puja, Grihapravesh" value="${esc(f.client||'')}"></div>
     <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">Portions <span class="required">*</span></label>
-        <input id="f-portions" type="number" placeholder="80" min="1" value="${f.portions||''}">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Time</label>
-        <input id="f-time" type="text" placeholder="12:30 PM" value="${esc(f.time_slot||'')}">
-      </div>
+      <div class="form-group"><label class="form-label">Portions <span class="required">*</span></label><input id="f-portions" type="number" placeholder="80" min="1" value="${f.portions||''}"></div>
+      <div class="form-group"><label class="form-label">Time</label><input id="f-time" type="text" placeholder="12:30 PM" value="${esc(f.time_slot||'')}"></div>
     </div>
-    <div class="form-group">
-      <label class="form-label">Quote price (£)</label>
-      <input id="f-price" type="number" placeholder="0.00" min="0" step="0.01" value="${f.quote_price||''}">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Venue</label>
-      <select id="f-venue">
-        <option value="__temple__" ${(f.venue_type||'__temple__')=='__temple__'?'selected':''}>Temple (Cowley)</option>
+    <div class="form-group"><label class="form-label">Quote price (£)</label><input id="f-price" type="number" placeholder="0.00" min="0" step="0.01" value="${f.quote_price||''}"></div>
+    <div class="form-group"><label class="form-label">Venue</label>
+      <select id="f-venue" onchange="toggleVenueOther()">
+        <option value="__temple__" ${(f.venue_type||'__temple__')==='__temple__'?'selected':''}>Temple (Cowley)</option>
         <option value="__devotee__" ${f.venue_type==='__devotee__'?'selected':''}>Devotee's house</option>
-        ${venues.map(v=>`<option value="${v.id}" ${f.venue_type===v.id?'selected':''} data-addr="${esc(v.address||'')}"> ${esc(v.name)}${v.address?' — '+esc(v.address):''}</option>`).join('')}
+        ${venues.map(v=>`<option value="${v.id}" ${f.venue_type===v.id?'selected':''}>${esc(v.name)}${v.address?' — '+esc(v.address):''}</option>`).join('')}
         <option value="__other__" ${f.venue_type==='__other__'?'selected':''}>Other / unlisted</option>
       </select>
     </div>
@@ -1047,8 +1012,7 @@ function openModal(prefill){
       <label class="form-label">Venue name / address</label>
       <input id="f-venue-other" type="text" placeholder="e.g. Community hall, address..." value="${esc(f.venue_other||'')}">
     </div>
-    <div class="form-group">
-      <label class="form-label">Status</label>
+    <div class="form-group"><label class="form-label">Status</label>
       <select id="f-status">
         <option value="confirmed" ${(f.order_status||'confirmed')==='confirmed'?'selected':''}>Confirmed</option>
         <option value="tentative" ${f.order_status==='tentative'?'selected':''}>Tentative</option>
@@ -1060,35 +1024,20 @@ function openModal(prefill){
       <div style="font-size:11px;color:var(--text3);margin-bottom:5px">Enter each item on a new line or separated by commas</div>
       <textarea id="f-menu" placeholder="Puliyogare&#10;Sambar rice&#10;Chitranna&#10;Payasam" style="min-height:100px">${esc(f.menu||'')}</textarea>
     </div>
-    <div class="form-group">
-      <label class="form-label">Contact person &amp; phone</label>
-      <input id="f-contact" type="text" placeholder="Ravi Sharma — 07890 123456" value="${esc(f.contact||'')}">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Volunteers assigned</label>
-      ${buildVolCheckboxes(f.volunteers||[])}
-    </div>
-    <div class="form-group">
-      <label class="form-label">Notes &amp; other details</label>
-      <textarea id="f-notes" placeholder="No onion / no garlic, allergy info, special requests, delivery instructions...">${esc(f.notes||'')}</textarea>
-    </div>
+    <div class="form-group"><label class="form-label">Contact person &amp; phone</label><input id="f-contact" type="text" placeholder="Ravi Sharma — 07890 123456" value="${esc(f.contact||'')}"></div>
+    <div class="form-group"><label class="form-label">Volunteers assigned</label>${buildVolCheckboxes(f.volunteers||[])}</div>
+    <div class="form-group"><label class="form-label">Notes &amp; other details</label><textarea id="f-notes" placeholder="No onion / no garlic, allergy info, special requests...">${esc(f.notes||'')}</textarea></div>
     <button class="btn-primary" id="save-btn" onclick="saveOrder()">${editId?'Save changes':'Add order'}</button>`;
   document.getElementById('modal-backdrop').classList.add('open');
 }
 
 function toggleVenueOther(){
-  const sel=document.getElementById('f-venue');
-  sel.onchange=toggleVenueOther;
-  document.getElementById('venue-other-group').style.display =
-    sel.value==='__other__'?'block':'none';
+  document.getElementById('venue-other-group').style.display=
+    document.getElementById('f-venue').value==='__other__'?'block':'none';
 }
-// attach onchange when modal opens
-document.addEventListener('change',function(e){if(e.target.id==='f-venue')toggleVenueOther();});
+document.addEventListener('change',e=>{ if(e.target.id==='f-venue') toggleVenueOther(); });
 
-function closeModal(){
-  document.getElementById('modal-backdrop').classList.remove('open');
-  editId=null;
-}
+function closeModal(){ document.getElementById('modal-backdrop').classList.remove('open'); editId=null; }
 function backdropClick(e){ if(e.target===document.getElementById('modal-backdrop')) closeModal(); }
 
 async function saveOrder(){
@@ -1097,107 +1046,82 @@ async function saveOrder(){
   if(!client){ showToast('Please enter an event / occasion name'); return; }
   if(!portions){ showToast('Please enter the number of portions'); return; }
   if(!selectedDate){ showToast('Please select a date on the calendar first'); return; }
-
   const btn=document.getElementById('save-btn');
   btn.disabled=true; btn.textContent='Saving...';
-
   const entry={
-    date_id: selectedDate,
-    devotee_name: document.getElementById('f-devotee').value.trim(),
+    date_id:selectedDate,
+    devotee_name:document.getElementById('f-devotee').value.trim(),
     client, portions,
-    time_slot: document.getElementById('f-time').value.trim(),
-    menu: document.getElementById('f-menu').value.trim(),
-    contact: document.getElementById('f-contact').value.trim(),
-    volunteers: Array.from(getSelectedVols()),
-    venue_type: document.getElementById('f-venue').value,
-    venue_other: document.getElementById('f-venue').value==='__other__'?(document.getElementById('f-venue-other')?.value||'').trim():'',
-    order_status: document.getElementById('f-status').value,
-    quote_price: parseFloat(document.getElementById('f-price').value)||0,
-    notes: document.getElementById('f-notes').value.trim(),
+    time_slot:document.getElementById('f-time').value.trim(),
+    menu:document.getElementById('f-menu').value.trim(),
+    contact:document.getElementById('f-contact').value.trim(),
+    volunteers:Array.from(getSelectedVols()),
+    venue_type:document.getElementById('f-venue').value,
+    venue_other:document.getElementById('f-venue').value==='__other__'?(document.getElementById('f-venue-other')?.value||'').trim():'',
+    order_status:document.getElementById('f-status').value,
+    quote_price:parseFloat(document.getElementById('f-price').value)||0,
+    notes:document.getElementById('f-notes').value.trim(),
+    created_at:new Date().toISOString(),
   };
-
-  let error;
-  if(editId){
-    ({error}=await sb.from('orders').update(entry).eq('id',editId));
-  } else {
-    ({error}=await sb.from('orders').insert(entry));
-  }
-
-  if(error){ showToast('Error saving. Try again.'); btn.disabled=false; btn.textContent=editId?'Save changes':'Add order'; return; }
-
-  // Log edit reason if we have one
-  if(editId && pendingReason){
-    const snap = Object.values(orders).flat().find(x=>x.id===editId) || {client:entry.client, date_id:entry.date_id};
-    await logChange(editId, snap, 'edited', pendingReason);
-    pendingReason = '';
-  }
-
-  closeModal();
-  showToast(editId?'Order updated':'Order added');
+  try {
+    if(editId){
+      await updateDoc(doc(db,'orders',editId),entry);
+      if(pendingReason){ await logChange(editId,entry,'edited',pendingReason); pendingReason=''; }
+    } else {
+      await addDoc(collection(db,'orders'),entry);
+    }
+    closeModal(); showToast(editId?'Order updated':'Order added');
+  } catch(e){ showToast('Error saving. Try again.'); btn.disabled=false; btn.textContent=editId?'Save changes':'Add order'; }
 }
 
 function editOrder(id){
-  const o = Object.values(orders).flat().find(x=>x.id===id);
+  const o=Object.values(orders).flat().find(x=>x.id===id);
   if(!o) return;
-  // Show reason capture before opening edit modal
-  openReasonModal('edit', id, o.client, ()=>{
-    selectedDate=o.date_id;
-    openModal(o);
-  });
+  openReasonModal('edit',id,o.client,()=>{ selectedDate=o.date_id; openModal(o); });
 }
 
 async function deleteOrder(id){
-  const o = Object.values(orders).flat().find(x=>x.id===id);
+  const o=Object.values(orders).flat().find(x=>x.id===id);
   if(!o) return;
-  openReasonModal('delete', id, o.client, async(reason)=>{
-    // Log the deletion then delete
-    await logChange(id, o, 'deleted', reason);
-    const{error}=await sb.from('orders').delete().eq('id',id);
-    if(error){ showToast('Could not delete order'); return; }
+  openReasonModal('delete',id,o.client,async(reason)=>{
+    await logChange(id,o,'deleted',reason);
+    await deleteDoc(doc(db,'orders',id));
     showToast('Order deleted');
   });
 }
 
-// ── reason modal ──
-let reasonCallback = null;
-let reasonOrderId = null;
-let pendingReason = '';
-
-function openReasonModal(type, id, orderName, callback){
-  reasonOrderId = id;
-  reasonCallback = callback;
-  const isDelete = type === 'delete';
-  document.getElementById('modal-body').innerHTML = `
+// ── Reason modal ──
+let reasonCallback=null;
+function openReasonModal(type,id,orderName,callback){
+  reasonCallback=callback;
+  const isDelete=type==='delete';
+  document.getElementById('modal-body').innerHTML=`
     <div class="reason-modal" style="text-align:left">
-      <div class="reason-icon ${isDelete?'del':'edit'}" style="display:flex">
-        <i class="ti ti-${isDelete?'trash':'edit'}" aria-hidden="true"></i>
-      </div>
+      <div class="reason-icon ${isDelete?'del':'edit'}" style="display:flex"><i class="ti ti-${isDelete?'trash':'edit'}"></i></div>
       <div class="reason-title">${isDelete?'Delete order':'Edit order'}</div>
       <div class="reason-sub">${esc(orderName)}</div>
       <div class="form-group">
         <label class="form-label">${isDelete?'Reason for deletion':'Reason for change'} <span class="required">*</span></label>
         <select id="reason-preset">
-          ${isDelete?`
-          <option value="">— Select reason —</option>
-          <option value="Cancelled by devotee">Cancelled by devotee</option>
-          <option value="Date changed">Date changed</option>
-          <option value="Insufficient volunteers">Insufficient volunteers</option>
-          <option value="Event postponed">Event postponed</option>
-          <option value="Duplicate entry">Duplicate entry</option>
-          <option value="Other">Other (add details below)</option>`:`
-          <option value="">— Select reason —</option>
-          <option value="Portions updated">Portions updated</option>
-          <option value="Date or time changed">Date or time changed</option>
-          <option value="Menu updated">Menu updated</option>
-          <option value="Venue changed">Venue changed</option>
-          <option value="Volunteer change">Volunteer change</option>
-          <option value="Status update">Status update (confirmed/tentative)</option>
-          <option value="Contact details updated">Contact details updated</option>
-          <option value="Other">Other (add details below)</option>`}
+          ${isDelete?`<option value="">— Select reason —</option>
+            <option value="Cancelled by devotee">Cancelled by devotee</option>
+            <option value="Date changed">Date changed</option>
+            <option value="Insufficient volunteers">Insufficient volunteers</option>
+            <option value="Event postponed">Event postponed</option>
+            <option value="Duplicate entry">Duplicate entry</option>
+            <option value="Other">Other</option>`
+          :`<option value="">— Select reason —</option>
+            <option value="Portions updated">Portions updated</option>
+            <option value="Date or time changed">Date or time changed</option>
+            <option value="Menu updated">Menu updated</option>
+            <option value="Venue changed">Venue changed</option>
+            <option value="Volunteer change">Volunteer change</option>
+            <option value="Status update">Status update</option>
+            <option value="Contact details updated">Contact details updated</option>
+            <option value="Other">Other</option>`}
         </select>
       </div>
-      <div class="form-group">
-        <label class="form-label">Additional details <span style="color:var(--text3);font-weight:400">(optional)</span></label>
+      <div class="form-group"><label class="form-label">Additional details <span style="color:var(--text3);font-weight:400">(optional)</span></label>
         <textarea id="reason-notes" placeholder="Any extra context..." style="min-height:60px"></textarea>
       </div>
       <div style="display:flex;gap:8px;margin-top:4px">
@@ -1209,145 +1133,234 @@ function openReasonModal(type, id, orderName, callback){
 }
 
 async function confirmReason(type){
-  const preset = document.getElementById('reason-preset').value;
-  const extra  = document.getElementById('reason-notes').value.trim();
+  const preset=document.getElementById('reason-preset').value;
+  const extra=document.getElementById('reason-notes').value.trim();
   if(!preset){ showToast('Please select a reason'); return; }
-  const fullReason = preset + (extra ? ' — ' + extra : '');
-
+  const fullReason=preset+(extra?' — '+extra:'');
   closeModal();
-
-  if(type === 'edit'){
-    // Store reason so saveOrder can log it
-    pendingReason = fullReason;
-    reasonCallback && reasonCallback(fullReason);
-  } else {
-    // delete path — callback handles the actual deletion
-    reasonCallback && reasonCallback(fullReason);
-  }
+  if(type==='edit'){ pendingReason=fullReason; reasonCallback&&reasonCallback(fullReason); }
+  else { reasonCallback&&reasonCallback(fullReason); }
 }
 
-async function logChange(orderId, orderSnap, action, reason){
+async function logChange(orderId,orderSnap,action,reason){
   try {
-    const entry = {
-      order_id: orderId,
-      order_client: orderSnap.client,
-      order_date: orderSnap.date_id,
-      action,
-      reason,
-      changed_at: new Date().toISOString(),
-    };
-    await sb.from('order_changes').insert(entry);
-  } catch(e){ console.warn('log failed', e); }
+    await addDoc(collection(db,'order_changes'),{
+      order_id:orderId, order_client:orderSnap.client||'',
+      order_date:orderSnap.date_id||orderSnap.date_id||'',
+      action, reason, changed_at:new Date().toISOString()
+    });
+  } catch(e){ console.warn('log failed',e); }
 }
 
-async function viewChangeLog(orderId, orderName){
-  document.getElementById('modal-body').innerHTML = `
+async function viewChangeLog(orderId,orderName){
+  document.getElementById('modal-body').innerHTML=`
     <div class="modal-head">
       <span class="modal-title">Change history</span>
-      <button class="close-btn" onclick="closeModal()" aria-label="Close"><i class="ti ti-x" aria-hidden="true"></i></button>
+      <button class="close-btn" onclick="closeModal()" aria-label="Close"><i class="ti ti-x"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:16px">${esc(orderName)}</div>
     <div id="change-log-body"><div style="text-align:center;padding:20px;color:var(--text3);font-size:13px">Loading...</div></div>`;
   document.getElementById('modal-backdrop').classList.add('open');
-
   try {
-    const{data}=await sb.from('order_changes')
-      .select('*').eq('order_id',orderId)
-      .order('changed_at',{ascending:false});
-    const entries = data||[];
-    const body = document.getElementById('change-log-body');
-    if(!body) return;
-    if(!entries.length){
-      body.innerHTML='<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px"><i class="ti ti-history" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>No changes recorded yet.</div>';
-      return;
-    }
-    const actionIcon = {edited:'ti-edit', deleted:'ti-trash', created:'ti-plus'};
-    const actionColor = {edited:'var(--accent)', deleted:'var(--red)', created:'var(--green)'};
-    body.innerHTML = '<div class="change-log-title">Change log</div>' +
-      entries.map(e=>{
-        const d=new Date(e.changed_at);
-        const when=d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})+' at '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
-        return `<div class="change-entry">
-          <div class="change-entry-action" style="color:${actionColor[e.action]||'var(--text)'}">
-            <i class="ti ${actionIcon[e.action]||'ti-edit'}" style="font-size:12px;vertical-align:-1px;margin-right:4px"></i>${e.action.charAt(0).toUpperCase()+e.action.slice(1)}
-          </div>
-          <div class="change-entry-reason">"${esc(e.reason)}"</div>
-          <div class="change-entry-meta">${when}</div>
-        </div>`;
-      }).join('');
-  } catch(e){
+    const snap=await getDocs(query(collection(db,'order_changes'), orderBy('changed_at','desc')));
+    const entries=snap.docs.filter(d=>d.data().order_id===orderId).map(d=>d.data());
     const body=document.getElementById('change-log-body');
-    if(body) body.innerHTML='<div style="color:var(--red);font-size:13px;padding:12px">Could not load history — make sure the order_changes SQL was run.</div>';
+    if(!body) return;
+    if(!entries.length){ body.innerHTML='<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px"><i class="ti ti-history" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>No changes recorded yet.</div>'; return; }
+    const actionIcon={edited:'ti-edit',deleted:'ti-trash',created:'ti-plus'};
+    const actionColor={edited:'var(--accent)',deleted:'var(--red)',created:'var(--green)'};
+    body.innerHTML='<div class="change-log-title">Change log</div>'+entries.map(e=>{
+      const d=new Date(e.changed_at);
+      const when=d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})+' at '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+      return `<div class="change-entry">
+        <div class="change-entry-action" style="color:${actionColor[e.action]||'var(--text)'}"><i class="ti ${actionIcon[e.action]||'ti-edit'}" style="font-size:12px;vertical-align:-1px;margin-right:4px"></i>${e.action.charAt(0).toUpperCase()+e.action.slice(1)}</div>
+        <div class="change-entry-reason">"${esc(e.reason)}"</div>
+        <div class="change-entry-meta">${when}</div>
+      </div>`;
+    }).join('');
+  } catch(e){ const body=document.getElementById('change-log-body'); if(body) body.innerHTML='<div style="color:var(--red);font-size:13px;padding:12px">Could not load history.</div>'; }
+}
+
+// ── Notifications ──
+function loadNotifications(){ try{ return JSON.parse(localStorage.getItem(NOTIF_KEY)||'[]'); }catch(e){ return []; } }
+function saveNotifications(n){ try{ localStorage.setItem(NOTIF_KEY,JSON.stringify(n.slice(0,50))); }catch(e){} }
+
+function addNotification(title,body,dateKey){
+  const notifs=loadNotifications();
+  notifs.unshift({id:Date.now(),title,body,dateKey,time:new Date().toISOString(),read:false});
+  saveNotifications(notifs); renderNotifBadge(); renderNotifList();
+}
+
+function renderNotifBadge(){
+  const notifs=loadNotifications();
+  const unread=notifs.filter(n=>!n.read).length;
+  const btn=document.getElementById('notif-btn');
+  if(!btn) return;
+  const old=btn.querySelector('.notif-badge');
+  if(old) old.remove();
+  if(unread>0){
+    const badge=document.createElement('span');
+    badge.className='notif-badge';
+    badge.textContent=unread>99?'99+':unread;
+    btn.appendChild(badge);
   }
 }
 
-function showForgotPin(){
-  document.getElementById('modal-body').innerHTML = `
-    <div style="text-align:center">
-      <div style="width:48px;height:48px;border-radius:12px;background:var(--amber-bg);color:var(--amber);display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 16px">
-        <i class="ti ti-key" aria-hidden="true"></i>
-      </div>
-      <div style="font-size:16px;font-weight:600;margin-bottom:6px">Reset admin PIN</div>
-      <div style="font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.5">
-        Enter the reset passphrase to clear the current PIN.<br>A new PIN can be set on next login.
-      </div>
-      <div class="form-group" style="text-align:left">
-        <label class="form-label">Reset passphrase</label>
-        <input id="reset-phrase" type="password" placeholder="Enter passphrase" onkeydown="if(event.key==='Enter')confirmReset()">
-        <div style="font-size:11px;color:var(--text3);margin-top:4px">Contact your admin if you don't have this.</div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:4px">
-        <button class="btn-sm" onclick="closeResetModal()" style="flex:1;justify-content:center">Cancel</button>
-        <button class="btn-primary" onclick="confirmReset()" style="flex:2;margin-top:0">Reset PIN</button>
+function renderNotifList(){
+  const list=document.getElementById('notif-list');
+  if(!list) return;
+  const notifs=loadNotifications();
+  if(!notifs.length){ list.innerHTML='<div class="notif-empty"><i class="ti ti-bell-off" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>No updates yet</div>'; return; }
+  list.innerHTML=notifs.map(n=>{
+    const t=new Date(n.time);
+    const when=t.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' '+t.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+    return `<div class="notif-item ${n.read?'':'unread'}" onclick="notifClick('${n.id}','${n.dateKey||''}')">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <span class="notif-dot" style="display:${n.read?'none':'block'}"></span>
+        <div style="flex:1;min-width:0">
+          <div class="notif-item-title">${esc(n.title)}</div>
+          <div class="notif-item-body">${esc(n.body)}</div>
+          <div class="notif-item-time">${when}</div>
+        </div>
       </div>
     </div>`;
+  }).join('');
+}
+
+function notifClick(id,dateKey){
+  const notifs=loadNotifications();
+  const n=notifs.find(x=>String(x.id)===String(id));
+  if(n) n.read=true;
+  saveNotifications(notifs); renderNotifBadge(); renderNotifList();
+  if(dateKey){ const [y,m]=dateKey.split('-').map(Number); calYear=y; calMonth=m-1; selectDate(dateKey); }
+  toggleNotifPanel();
+}
+
+function toggleNotifPanel(){
+  const panel=document.getElementById('notif-panel');
+  notifPanelOpen=!notifPanelOpen;
+  panel.style.display=notifPanelOpen?'flex':'none';
+  panel.style.flexDirection='column';
+  if(notifPanelOpen) renderNotifList();
+}
+
+function clearNotifications(){
+  const notifs=loadNotifications().map(n=>({...n,read:true}));
+  saveNotifications(notifs); renderNotifBadge(); renderNotifList();
+}
+
+document.addEventListener('click',e=>{
+  if(!notifPanelOpen) return;
+  const panel=document.getElementById('notif-panel');
+  const btn=document.getElementById('notif-btn');
+  if(panel&&!panel.contains(e.target)&&btn&&!btn.contains(e.target)){ notifPanelOpen=false; panel.style.display='none'; }
+});
+
+// ── CSV Import ──
+function openCsvImport(){
+  document.getElementById('modal-body').innerHTML=`
+    <div class="modal-head">
+      <span class="modal-title">Import orders from CSV</span>
+      <button class="close-btn" onclick="closeModal()" aria-label="Close"><i class="ti ti-x"></i></button>
+    </div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.6">
+      Upload your CSV file exported from the old system. Required columns:<br>
+      <code style="font-size:11px;background:var(--surface2);padding:2px 6px;border-radius:4px">date_id, client, portions, time_slot, menu, contact, volunteers, venue_type, order_status, quote_price, notes, devotee_name</code>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Select CSV file</label>
+      <input type="file" id="csv-file" accept=".csv" style="padding:8px">
+    </div>
+    <div id="csv-preview" style="font-size:12px;color:var(--text2);margin-bottom:12px"></div>
+    <button class="btn-primary" id="csv-import-btn" onclick="runCsvImport()" style="display:none">Import orders</button>
+  `;
   document.getElementById('modal-backdrop').classList.add('open');
-  setTimeout(()=>document.getElementById('reset-phrase').focus(), 100);
+  document.getElementById('csv-file').addEventListener('change', previewCsv);
 }
 
-const RESET_PHRASE = 'brundavan2025';
+let csvRows = [];
+function previewCsv(e){
+  const file=e.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const lines=ev.target.result.split('
+').filter(l=>l.trim());
+    const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,'').toLowerCase());
+    csvRows=lines.slice(1).map(line=>{
+      const vals=line.match(/(".*?"|[^,]+)(?=,|$)/g)||line.split(',');
+      const obj={};
+      headers.forEach((h,i)=>{ obj[h]=(vals[i]||'').replace(/^"|"$/g,'').trim(); });
+      return obj;
+    }).filter(r=>r.client||r.date_id);
+    document.getElementById('csv-preview').innerHTML=`<span style="color:var(--green);font-weight:600">${csvRows.length} orders found</span> — click Import to add them.`;
+    document.getElementById('csv-import-btn').style.display='block';
+  };
+  reader.readAsText(file);
+}
 
-function confirmReset(){
-  const phrase = (document.getElementById('reset-phrase').value||'').trim().toLowerCase();
-  if(phrase !== RESET_PHRASE){
-    document.getElementById('reset-phrase').value='';
-    document.getElementById('reset-phrase').style.borderColor='var(--red)';
-    document.getElementById('reset-phrase').placeholder='Incorrect — try again';
-    setTimeout(()=>{
-      const el=document.getElementById('reset-phrase');
-      if(el){ el.style.borderColor=''; el.placeholder='Enter passphrase'; }
-    },2000);
-    return;
+async function runCsvImport(){
+  const btn=document.getElementById('csv-import-btn');
+  btn.disabled=true; btn.textContent='Importing...';
+  let count=0;
+  for(const row of csvRows){
+    try {
+      // Normalise date_id — handle legacy d1-d5
+      const legacyMap={d1:'2025-06-27',d2:'2025-06-28',d3:'2025-07-01',d4:'2025-07-11',d5:'2025-07-12'};
+      const dateId=legacyMap[row.date_id]||row.date_id||'';
+      const vols=row.volunteers?row.volunteers.split(';').map(v=>v.trim()).filter(Boolean):[];
+      await addDoc(collection(db,'orders'),{
+        date_id:dateId,
+        client:row.client||'',
+        devotee_name:row.devotee_name||'',
+        portions:parseInt(row.portions)||0,
+        time_slot:row.time_slot||'',
+        menu:row.menu||'',
+        contact:row.contact||'',
+        volunteers:vols,
+        venue_type:row.venue_type||'__temple__',
+        venue_other:row.venue_other||'',
+        order_status:row.order_status||'confirmed',
+        quote_price:parseFloat(row.quote_price)||0,
+        notes:row.notes||'',
+        created_at:new Date().toISOString(),
+      });
+      count++;
+    } catch(e){ console.error('Import row failed',e); }
   }
-  localStorage.removeItem(PIN_KEY);
-  closeResetModal();
-  const sub=document.getElementById('login-sub');
-  if(sub) sub.textContent='Admin PIN cleared. Set a new 4-digit PIN.';
-  [0,1,2,3].forEach(i=>{ const el=document.getElementById('p'+i); if(el) el.value=''; });
-  document.getElementById('login-error').textContent='';
-  showToast('Admin PIN reset — set a new one now');
-  setTimeout(()=>{ const p=document.getElementById('p0'); if(p) p.focus(); }, 300);
+  closeModal();
+  showToast(`${count} orders imported successfully`);
 }
 
-function closeResetModal(){
-  document.getElementById('modal-backdrop').classList.remove('open');
-}
-
+// ── Toast ──
 function showToast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg; t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),2500);
 }
-</script>
-<script>
-// Register service worker for PWA offline support
+
+// ── PWA ──
 if('serviceWorker' in navigator){
-  window.addEventListener('load', ()=>{
-    navigator.serviceWorker.register('sw.js')
-      .then(r=>console.log('SW registered'))
-      .catch(e=>console.log('SW failed', e));
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js').catch(e=>console.log('SW failed',e));
   });
 }
+
+// Make functions available globally
+window.setView=setView; window.requireAdmin=requireAdmin; window.logoutAdmin=logoutAdmin;
+window.showPinPanel=showPinPanel; window.showRoleSelect=showRoleSelect;
+window.pinInput=pinInput; window.pinKey=pinKey; window.checkPin=checkPin;
+window.changeMonth=changeMonth; window.goToday=goToday; window.selectDate=selectDate;
+window.openModal=openModal; window.closeModal=closeModal; window.backdropClick=backdropClick;
+window.saveOrder=saveOrder; window.editOrder=editOrder; window.deleteOrder=deleteOrder;
+window.toggleVolCheck=toggleVolCheck; window.toggleVenueOther=toggleVenueOther;
+window.addVolunteer=addVolunteer; window.removeVolunteer=removeVolunteer;
+window.addVenue=addVenue; window.removeVenue=removeVenue;
+window.confirmReason=confirmReason; window.viewChangeLog=viewChangeLog;
+window.toggleNotifPanel=toggleNotifPanel; window.clearNotifications=clearNotifications;
+window.notifClick=notifClick; window.showForgotPin=showForgotPin;
+window.confirmReset=confirmReset; window.closeResetModal=closeResetModal;
+window.openCsvImport=openCsvImport; window.runCsvImport=runCsvImport;
 </script>
 </body>
 </html>
